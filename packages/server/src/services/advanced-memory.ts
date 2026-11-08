@@ -1249,12 +1249,12 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
       extra: parsedMessageExtra(chatId, message),
     })) as AdvancedMemoryMessage[];
     const explicitAudience =
-      metadata.hasExplicitMessageAudience === true ||
+      metadata.chatMessageAclExplicitAudience === true ||
       messages.some((message) => Object.hasOwn(object(message.extra), "visibleToCharacterIds"));
     if (explicitAudience && !allowExplicitAudience) {
       throw new Error("Advanced Memory is unavailable for chats with explicit message audiences");
     }
-    if (explicitAudience) metadata.hasExplicitMessageAudience = true;
+    if (explicitAudience) metadata.chatMessageAclExplicitAudience = true;
     const characterIds = strings(chat.characterIds);
     const names = new Map<string, string>();
     const characterStore = createCharactersStorage(db);
@@ -6550,7 +6550,7 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
 
   async function exportTransferRecords(chatId: string, sourceMessages?: readonly AdvancedMemoryMessage[]) {
     const ctx = await context(chatId, true);
-    if (ctx.metadata.hasExplicitMessageAudience === true) return [];
+    if (ctx.metadata.chatMessageAclExplicitAudience === true) return [];
     const sourceById = new Map((sourceMessages ?? ctx.messages).map((message) => [message.id, message]));
     const current = await records(chatId);
     const indexes = new Map(ctx.messages.map((message, index) => [message.id, index + 1]));

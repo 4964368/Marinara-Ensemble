@@ -32,6 +32,8 @@ const { createPromptsStorage } = await import("../../packages/server/src/service
 const { chunkAndEmbedMessages, recallMemories } = await import("../../packages/server/src/services/memory-recall.js");
 const { resolveMemoryRecallEmbeddingSource } =
   await import("../../packages/server/src/services/memory-recall-embedding.js");
+const { createCapabilityPersistenceHost } =
+  await import("../../packages/server/src/services/capability-packages/capability-persistence.service.js");
 const { characterDataSchema } = await import("../../packages/shared/dist/index.js");
 
 const secret = "ACL_ALICE_UNSHARED_SECRET";
@@ -258,6 +260,23 @@ try {
   const crossChat = await generate(sibling, { userMessage: "What did we talk about today?", forCharacterId: bob.id });
   assert.ok(crossChat.every(({ text }) => !text.includes(todaySecret)));
   assert.ok(crossChat.some(({ kind, text }) => kind === "reply" && text.includes(retelling)));
+
+  const beforeDryRun = requests.length;
+  const dryRun = await app.inject({
+    method: "POST",
+    url: "/api/generate/dryRun",
+    payload: { chatId: conversation, forCharacterId: bob.id, injectChatSummary: true, injectTrackers: true },
+  });
+  assert.equal(dryRun.statusCode, 200, dryRun.body);
+  const dryRunRequests = requests.slice(beforeDryRun);
+  assert.ok(dryRunRequests.some(({ text }) => text.includes(publicText)));
+  assert.ok(dryRunRequests.every(({ text }) => !text.includes(secret) && !text.includes(oldSummary)));
+  const persistence = createCapabilityPersistenceHost(db, ["chat-read"]);
+  const capabilityHistory = JSON.stringify(await persistence.listMessages(conversation));
+  assert.ok(capabilityHistory.includes(publicText));
+  assert.ok(!capabilityHistory.includes(secret) && !capabilityHistory.includes(directedRetelling));
+  assert.ok(!JSON.stringify(await persistence.listChatSummaries!(conversation)).includes(oldSummary));
+  assert.ok(!JSON.stringify(await persistence.getChat(conversation)).includes(oldSummary));
 
   const summary = await app.inject({
     method: "POST",

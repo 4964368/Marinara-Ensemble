@@ -220,22 +220,24 @@ try {
     ["game", chatIds.get("game")!, true],
     ["missing", "deleted-source", false],
   ] as const) {
-    await db
-      .insert(memoryChunks)
-      .values({
-        id: `import-${label}`,
-        chatId: destination,
-        sourceChatId,
-        content: raw,
-        embedding: JSON.stringify([1, 0]),
-        embeddingSpaceId: `test:import-${label}`,
-        firstMessageAt: "2026-09-30T10:00:00.000Z",
-        lastMessageAt: "2026-09-30T10:00:04.000Z",
-        messageCount: 5,
-      });
+    await db.insert(memoryChunks).values({
+      id: `import-${label}`,
+      chatId: destination,
+      sourceChatId,
+      content: raw,
+      embedding: JSON.stringify([1, 0]),
+      embeddingSpaceId: `test:import-${label}`,
+      firstMessageAt: "2026-09-30T10:00:00.000Z",
+      lastMessageAt: "2026-09-30T10:00:04.000Z",
+      messageCount: 5,
+    });
     const recalled = await recallMemories(db, "Public", [destination], {
       embeddingSource: { spaceId: `test:import-${label}`, label, embed: async (texts) => texts.map(() => [1, 0]) },
     });
+    if (label === "missing") {
+      assert.deepEqual(recalled, [], "an unavailable source cannot establish a chunk's audience");
+      continue;
+    }
     assert.equal(recalled.length, 1);
     assert.equal(
       recalled[0]!.content.includes("SECRET"),

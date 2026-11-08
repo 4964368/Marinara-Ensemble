@@ -1,3 +1,9 @@
+import {
+  hasExplicitMessageAudience,
+  hasRestrictedMessageHistory,
+  isSharedCharacterMessage,
+  messageCharacterAccess,
+} from "../../services/generation/message-access.js";
 import { withLorebookImageCompatibility } from "../../services/llm/lorebook-image-provider.js";
 import {
   appendLorebookImageMessages,
@@ -731,20 +737,31 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         return [];
       }
     })();
-    const allChatMessages = (await chats.listMessages(chatId)).map((message) =>
-      chatMode === "roleplay" && message.role === "user"
-        ? { ...message, content: parseRoleplayUserCommands(message.content).content }
-        : message,
-    );
+    const storedMessages = await chats.listMessages(chatId);
+    const restrictedHistory = hasRestrictedMessageHistory(chatMeta, storedMessages);
+    const allChatMessages = storedMessages
+      .filter(
+        (message) =>
+          isSharedCharacterMessage(message) ||
+          (returnPrompt && messageCharacterAccess(message).visibleToCharacterIds === undefined),
+      )
+      .map((message) =>
+        chatMode === "roleplay" && message.role === "user"
+          ? { ...message, content: parseRoleplayUserCommands(message.content).content }
+          : message,
+      );
     const advancedMemorySettings = normalizeAdvancedMemorySettings(chatMeta.advancedMemory);
-    const advancedMemoryEnabled = chatMode === "roleplay" && advancedMemorySettings.enabled;
+    const advancedMemoryEnabled =
+      chatMode === "roleplay" &&
+      advancedMemorySettings.enabled &&
+      !hasExplicitMessageAudience(chatMeta, storedMessages);
     // Prompt inspection previews the main reply; auxiliary dry-run generations
     // (including extension/agent calls) never perform or receive Advanced Recall.
     const advancedMemoryService = advancedMemoryEnabled && returnPrompt ? createAdvancedMemoryService(app.db) : null;
     let advancedMemoryPlacements: AdvancedMemoryPlacement[] = [];
     const dryRunActiveAgentIds = Array.isArray(chatMeta.activeAgentIds) ? (chatMeta.activeAgentIds as string[]) : [];
     const dryRunChatEnableAgents = shouldEnableAgentsForGeneration({
-      chatEnableAgents: chatMeta.enableAgents === true,
+      chatEnableAgents: !restrictedHistory && chatMeta.enableAgents === true,
       impersonate,
       impersonateBlockAgents: false,
     });
@@ -781,7 +798,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         chatMessages = chatMessages.filter((message) => timelineIds.has(message.id));
       }
     }
-    if (chatMode === "roleplay" && !advancedMemoryEnabled) {
+    if (chatMode === "roleplay" && !advancedMemoryEnabled && !restrictedHistory) {
       chatMessages = capSummarizedHistory(chatMessages, chatMeta, {
         excludeMessageIds: regenerateMessageId ? [regenerateMessageId] : undefined,
       }).messages;
@@ -920,7 +937,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
         content: withLatestMessageReply(
           m.role === "assistant" ? appendSentMediaNotes(content, attachments, attachments, chatSpeakerNames) : content,
-          extra.replyTo,
+          restrictedHistory ? undefined : extra.replyTo,
           m.role === "user" && m.id === latestReplyUserMessageId,
         ),
         contextKind: "history" as const,
@@ -1059,16 +1076,17 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         logger.warn(error, "[dryRun] Roleplay summary embedding setup failed; keeping all summaries in context");
       }
     }
-    const activeChatSummary = advancedMemoryEnabled
-      ? null
-      : await resolveRoleplayChatSummaryForPrompt({
-          chatMode,
-          chatMetadata: chatMeta,
-          messages: mappedMessages,
-          excludeMessageIds: regenerateMessageId ? [regenerateMessageId] : undefined,
-          vectorizerAvailable: summaryVectorizerAvailable,
-          embeddingOptions: { embeddingSource: summaryEmbeddingSource },
-        });
+    const activeChatSummary =
+      advancedMemoryEnabled || restrictedHistory
+        ? null
+        : await resolveRoleplayChatSummaryForPrompt({
+            chatMode,
+            chatMetadata: chatMeta,
+            messages: mappedMessages,
+            excludeMessageIds: regenerateMessageId ? [regenerateMessageId] : undefined,
+            vectorizerAvailable: summaryVectorizerAvailable,
+            embeddingOptions: { embeddingSource: summaryEmbeddingSource },
+          });
 
     // Persona resolution (same strategy as generation; read-only)
     let personaId: string | null = null;
@@ -1178,7 +1196,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       presetPartsCache.set(presetId, pending);
       return pending;
     };
-    const chatMacroVariables = normalizeChatMacroVariables(chatMeta.macroVariables);
+    const chatMacroVariables = normalizeChatMacroVariables(restrictedHistory ? undefined : chatMeta.macroVariables);
     // Same base level as the parameters this preview reports below: the preset's when it assembles the prompt (not
     // with promptParts) or, in Conversation and Game, always; otherwise none.
     const presetUsesModeParameters = chatMode === "conversation" || chatMode === "game";
@@ -1848,7 +1866,11 @@ export async function registerDryRunRoute(app: FastifyInstance) {
           const id = marker.agentType;
           if (marker.type !== "agent_data" || !id || !eligibleTypes.has(id)) continue;
           runtimeAgentSectionTypes.add(id);
-          if (!packageIds.has(id) && !(resolvedInjectTrackers && COMMITTED_TRACKER_AGENT_TYPES.has(id))) continue;
+          if (
+            restrictedHistory ||
+            (!packageIds.has(id) && !(resolvedInjectTrackers && COMMITTED_TRACKER_AGENT_TYPES.has(id)))
+          )
+            continue;
           trackerSectionTokens.set(id, makeRuntimeAgentSectionTokens(id, `preview_${crypto.randomUUID()}`));
         } catch {
           /* Ignore malformed marker config, as generation does. */
@@ -2162,7 +2184,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
 
     // Optional injection: tracker context (read-only snapshot)
-    const resolvedInjectTrackersForRun = usePromptParts ? false : resolvedInjectTrackers;
+    const resolvedInjectTrackersForRun = !restrictedHistory && !usePromptParts && resolvedInjectTrackers;
     if (resolvedInjectTrackersForRun) {
       const snap = projectGameSnapshotLocation(
         await loadLatestGameSnapshot(app, chatId, visibleGameStateAnchor, regenerateMessageId),

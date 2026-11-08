@@ -41,16 +41,26 @@ export function isSharedCharacterMessage(message: MessageAccessSource): boolean 
   return canReadCharacterMessage(messageCharacterAccess(message), []);
 }
 
+/** Once a chat has contained restricted data, old unproven derivatives remain quarantined. */
+export function preserveMessageAclHistory(previous: unknown, next: Record<string, unknown>): Record<string, unknown> {
+  const meta = parseExtra(previous);
+  return {
+    ...next,
+    ...(meta.chatMessageAclRestrictedHistory === true ? { chatMessageAclRestrictedHistory: true } : {}),
+    ...(meta.chatMessageAclExplicitAudience === true ? { chatMessageAclExplicitAudience: true } : {}),
+  };
+}
+
 export function hasExplicitMessageAudience(metadata: unknown, messages: readonly MessageAccessSource[]): boolean {
   return (
-    parseExtra(metadata).hasExplicitMessageAudience === true ||
+    parseExtra(metadata).chatMessageAclExplicitAudience === true ||
     messages.some((message) => Object.hasOwn(parseExtra(message.extra), "visibleToCharacterIds"))
   );
 }
 
 export function hasRestrictedMessageHistory(metadata: unknown, messages: readonly MessageAccessSource[]): boolean {
   const meta = parseExtra(metadata);
-  if (meta.hasRestrictedMessageHistory === true || meta.hasExplicitMessageAudience === true) return true;
+  if (meta.chatMessageAclRestrictedHistory === true || meta.chatMessageAclExplicitAudience === true) return true;
   const covered = new Set(
     Array.isArray(meta.summaryEntries)
       ? meta.summaryEntries.flatMap((entry) => characterIds(parseExtra(entry).hiddenMessageIds))

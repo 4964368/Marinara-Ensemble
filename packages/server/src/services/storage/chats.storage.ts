@@ -1,4 +1,8 @@
-import { isSharedCharacterMessage, resolveMessageVisibility } from "../generation/message-access.js";
+import {
+  isSharedCharacterMessage,
+  preserveMessageAclHistory,
+  resolveMessageVisibility,
+} from "../generation/message-access.js";
 import { isDeepStrictEqual } from "node:util";
 import { currentRoomGeneration, resolveRoomGenerationPolicy } from "../multiplayer/generation-policy.js";
 // ──────────────────────────────────────────────
@@ -1885,10 +1889,13 @@ export function createChatsStorage(db: DB) {
         // A model/agent's old snapshot must never restore an ended room or overwrite its coordinator.
         return this.patchMetadata(id, () => metadata);
       }
-      await db
-        .update(chats)
-        .set({ metadata: JSON.stringify(metadata), updatedAt: now() })
-        .where(eq(chats.id, id));
+      await db.transaction(async (tx) => {
+        const [previous] = await tx.select({ metadata: chats.metadata }).from(chats).where(eq(chats.id, id)).limit(1);
+        await tx
+          .update(chats)
+          .set({ metadata: JSON.stringify(preserveMessageAclHistory(previous?.metadata, metadata)), updatedAt: now() })
+          .where(eq(chats.id, id));
+      });
       return this.getById(id);
     },
 
@@ -1985,7 +1992,7 @@ export function createChatsStorage(db: DB) {
           room.signal?.throwIfAborted();
           protectRoomMetadata(patch, opts.allowRoomKeys);
         }
-        const merged = mergeMetadataPatch(current, patch);
+        const merged = preserveMessageAclHistory(current, mergeMetadataPatch(current, patch));
         // Explicitly detaching a pinned book resets its chat-local entry state.
         // Temporary exclusions retain it so disabling/re-enabling a book is reversible.
         if (Array.isArray(patch.activeLorebookIds) && Array.isArray(current.activeLorebookIds)) {
@@ -2404,12 +2411,12 @@ export function createChatsStorage(db: DB) {
         if (!chat) throw new Error("Chat not found");
         const recipients = resolveMessageVisibility(input.messageVisibility, chat);
         delete extra.visibleToCharacterIds;
+        extra.visibilityManual = true;
         if (recipients !== undefined) {
           if (chat.mode !== "roleplay" && chat.mode !== "conversation") {
             throw new Error("Restricted message visibility is available in Roleplay and Conversation");
           }
           extra.visibleToCharacterIds = recipients;
-          extra.visibilityManual = true;
         }
       }
       if (!isSharedCharacterMessage({ extra }) || (extra.hiddenFromAI === true && extra.visibilityManual === true)) {
@@ -2418,8 +2425,8 @@ export function createChatsStorage(db: DB) {
         await this.patchMetadata(
           input.chatId,
           {
-            hasRestrictedMessageHistory: true,
-            ...(Object.hasOwn(extra, "visibleToCharacterIds") ? { hasExplicitMessageAudience: true } : {}),
+            chatMessageAclRestrictedHistory: true,
+            ...(Object.hasOwn(extra, "visibleToCharacterIds") ? { chatMessageAclExplicitAudience: true } : {}),
           },
           { touchUpdatedAt: false },
         );

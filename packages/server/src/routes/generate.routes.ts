@@ -2228,9 +2228,12 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
       const privateTimelineEnd = roleplayTimelineEnd
         ? fullScopedMessages.findIndex((message) => message.id === roleplayTimelineEnd)
         : -1;
-      const privateHistory = (
-        privateTimelineEnd < 0 ? fullScopedMessages : fullScopedMessages.slice(0, privateTimelineEnd)
-      ).filter((message) => !isSharedCharacterMessage(message) && !isMessageHiddenFromAI(message));
+      const fullTimeline =
+        privateTimelineEnd < 0 ? fullScopedMessages : fullScopedMessages.slice(0, privateTimelineEnd);
+      const privateHistory = fullTimeline.filter(
+        (message) => !isSharedCharacterMessage(message) && !isMessageHiddenFromAI(message),
+      );
+      const originalTimelineTail = fullTimeline.at(-1);
       const roleplayTimeline = [
         ...(roleplayTimelineIndex < 0
           ? scopedMessages
@@ -2737,9 +2740,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
           (() => {
             const replyTo = parseExtra(extra.replyTo);
             const quoted = typeof replyTo.messageId === "string" ? messageById.get(replyTo.messageId) : undefined;
-            return quoted && isSharedCharacterMessage(quoted) && !isMessageHiddenFromAI(quoted)
-              ? { ...replyTo, content: quoted.content }
-              : undefined;
+            return quoted && isSharedCharacterMessage(quoted) && !isMessageHiddenFromAI(quoted) ? replyTo : undefined;
           })(),
           m.role === "user" && m.id === latestUserMessageId,
         );
@@ -9280,7 +9281,10 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
               [...roleplayTimeline, ...privateTurns],
               roleplayCallerId ? { id: roleplayCallerId, kind: "character" } : null,
             );
-          const latestRoleplayMessage = roleplayTimeline.at(-1);
+          const sharedTimelineTail = roleplayTimeline.at(-1);
+          // An inaccessible last turn must not make an earlier public turn interruptible.
+          const latestRoleplayMessage =
+            sharedTimelineTail && !messageById.has(sharedTimelineTail.id) ? sharedTimelineTail : originalTimelineTail;
           const roleplayInterruptionTarget =
             chatMode === "roleplay" &&
             !input.impersonate &&

@@ -3264,7 +3264,7 @@ export async function chatsRoutes(app: FastifyInstance) {
         ) {
           await storage.patchMetadata(
             req.params.chatId,
-            { hasRestrictedMessageHistory: true },
+            { chatMessageAclRestrictedHistory: true },
             {
               metadataQueueHeld: true,
               touchUpdatedAt: false,
@@ -5866,7 +5866,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     await storage.raiseWriteOrdinalFloor(newChat.id, sourceChat.writeOrdinalCounter);
     await storage.updateMetadata(newChat.id, {
       ...settingsToKeep,
-      ...(restrictedSource ? { hasRestrictedMessageHistory: true } : {}),
+      ...(restrictedSource ? { chatMessageAclRestrictedHistory: true } : {}),
       branchName: "New Branch",
       branchParentChatId: sourceChat.id,
       branchParentMessageId: forkSourceMessage?.id ?? null,

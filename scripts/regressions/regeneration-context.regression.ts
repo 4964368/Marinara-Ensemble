@@ -238,10 +238,20 @@ const embeddingSource: MemoryRecallEmbeddingSource = {
 };
 
 try {
+  const recallChat = await createChatsStorage(db).create({
+    name: "Regeneration recall",
+    mode: "roleplay",
+    characterIds: [],
+    groupId: null,
+    personaId: null,
+    promptPresetId: null,
+    connectionId: null,
+  });
+  assert.ok(recallChat);
   await db.insert(memoryChunks).values([
     {
       id: "settled-memory",
-      chatId: "regen-chat",
+      chatId: recallChat.id,
       content: "Settled memory.",
       embedding: JSON.stringify([1, 0]),
       embeddingSpaceId,
@@ -253,7 +263,7 @@ try {
     },
     {
       id: "contaminated-memory",
-      chatId: "regen-chat",
+      chatId: recallChat.id,
       content: "Latest user prompt and discarded assistant response.",
       embedding: JSON.stringify([1, 0]),
       embeddingSpaceId,
@@ -265,7 +275,7 @@ try {
     },
     {
       id: "newer-memory",
-      chatId: "regen-chat",
+      chatId: recallChat.id,
       content: "Anything newer than the regenerated response.",
       embedding: JSON.stringify([1, 0]),
       embeddingSpaceId,
@@ -277,12 +287,12 @@ try {
     },
   ]);
 
-  const ordinaryRecall = await recallMemories(db, "Latest user prompt", ["regen-chat"], {
+  const ordinaryRecall = await recallMemories(db, "Latest user prompt", [recallChat.id], {
     embeddingSource,
   });
   assert.equal(ordinaryRecall.length, 3, "ordinary recall must continue considering every relevant memory chunk");
 
-  const regenerationRecall = await recallMemories(db, "Latest user prompt", ["regen-chat"], {
+  const regenerationRecall = await recallMemories(db, "Latest user prompt", [recallChat.id], {
     embeddingSource,
     excludeFromMessageAt: "2026-07-29T10:00:00.000Z",
   });
@@ -297,7 +307,7 @@ try {
     db,
     messages: promptMessages,
     currentInputMessages: [{ role: "user", content: "Latest user prompt" }],
-    chatId: "regen-chat",
+    chatId: recallChat.id,
     embeddingSource,
     excludeFromMessageAt: "2026-07-29T10:00:00.000Z",
     contextLimit: undefined,
@@ -353,7 +363,13 @@ try {
     );
   }
 
-  const swipeMetadataMessage = createdMessages[5]!;
+  const swipeMetadataMessage = await chatStorage.createMessage({
+    chatId: recallChat.id,
+    role: "assistant",
+    characterId: null,
+    content: "A separate message with character visibility.",
+  });
+  assert.ok(swipeMetadataMessage);
   await chatStorage.updateMessageExtra(swipeMetadataMessage.id, {
     isConversationStart: true,
     conversationStartForCharacterIds: ["new-character"],
