@@ -1,28 +1,31 @@
-# 🍝 Marinara Engine
+# Marinara-Ensemble
 
-<h3><b>Fun. Intuitive. Plug-And-Play.</b></h3>
+Marinara-Ensemble is an independent source fork of [Marinara Engine](https://github.com/Pasta-Devs/Marinara-Engine) for roleplay with several AI characters. Each character can use a different model, remember what they experienced, and take actions while you are away. You play one participant in a shared world.
 
-<p>
-  <b>A local, AI-powered chat, roleplay, and game engine</b> built around one idea: <b>you install it, you run it, and it just works. Oh, and don't forget about the part where you have fun! ALSO, HEY, LOOK, IT'S FREE.</b><br/>
-  Created with agentic use in mind, allowing multiple requests at once. Everything is connected. Chat with your characters OOC about your roleplays. Have them create RP scenes for you. All designed with simplicity in mind: we don't want to spend hours on setup, we just want to play.<br/>
-  This is a full-on passion project; it started as a small personal playground, but over time it grew into something enormous. Thank you all for your support.<br/>
-</p>
+The fork is based on upstream commit [`fc0333c`](https://github.com/Pasta-Devs/Marinara-Engine/commit/fc0333c3fe978cda5e0b919bd6faec985901704e). The P0, M1 and M2 changes below were developed in November 2026. Pasta-Devs does not operate or endorse this fork. Upstream releases, screenshots and credits are identified below; they are not releases of Marinara-Ensemble.
 
----
+## What the fork adds
 
-> **⚠️ Beta Software** — Work in progress. Expect rough edges, missing features, and breaking changes. Bug reports and feedback are very welcome!
+| Stage | What you can do |
+| --- | --- |
+| P0: Character access | Choose who receives a message. Each character's prompt, history, summaries, retrieval and cross-chat recall respect the saved audience. Restricted material stays out of shared context when its provenance cannot be verified. |
+| M1: Independent models | Assign a saved provider connection and model per character. Individual group replies and server-run Character Exchanges use those assignments. Set call, token and interval limits, then pause or resume the run. |
+| M2: Character worlds | Configure scenes and goals in an Individual Conversation. Characters can move, observe, wait, speak, whisper or retell information. They retain private evidence, beliefs and directional relationships. The server validates actions, persists results and shows the player the events they could witness. |
 
----
+M2 is a development milestone. The source build and the P0/M1/M2 regressions passed. Two desktop smoke checks encountered HTTP 500 from the inherited capability catalog; the dedicated M2 browser flow passed. See [M2 runtime and interface notes](ENSEMBLE-WORLD.md) for current limits.
 
 > **Fully optional multiplayer:** Private shared sessions require two explicit opt-ins and a trusted client for every participant. See [multiplayer setup and limits](docs/CONFIGURATION.md#optional-multiplayer).
 
 ## Table of Contents
 
-- [🍝 Marinara Engine](#-marinara-engine)
+- [Marinara-Ensemble](#marinara-ensemble)
+  - [What the fork adds](#what-the-fork-adds)
   - [Table of Contents](#table-of-contents)
   - [Screenshots](#screenshots)
   - [Latest Release](#latest-release)
   - [Installation](#installation)
+    - [Run Marinara-Ensemble from source](#run-marinara-ensemble-from-source)
+    - [Configure models and enter the demo](#configure-models-and-enter-the-demo)
   - [Features](#features)
     - [Chat \& Roleplay](#chat--roleplay)
     - [Visual \& Immersive](#visual--immersive)
@@ -41,6 +44,8 @@
 ---
 
 ## Screenshots
+
+These screenshots show inherited Marinara Engine features.
 
 <p align="center">
   <img src="docs/screenshots/Desktop_Roleplay_View.png" width="90%" alt="Roleplay Chat — Desktop" />
@@ -128,11 +133,38 @@
 
 Current stable release: **[v2.5.2](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.5.2)**.
 
+This is an upstream Marinara Engine release. To run the Ensemble changes, use the source checkout below.
+
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page with a Windows installer, Android bootstrap APK, and named versioned source ZIP. Android APKs are Termux bootstrap + WebView shells: they can download Termux from F-Droid, launch Android's installer, start the Termux setup flow after required permission prompts, then open the local Marinara server on the same device. **[Download the latest Android APK directly](https://github.com/Pasta-Devs/Marinara-Engine/releases/latest/download/marinara-engine-android.apk).**
 
 ---
 
 ## Installation
+
+### Run Marinara-Ensemble from source
+
+Before you start, install Node.js 24–26 and use the pnpm version declared in [package.json](package.json).
+
+```sh
+git clone https://github.com/4964368/Marinara-Ensemble.git
+cd Marinara-Ensemble
+git switch feat/ensemble-world
+pnpm install
+pnpm dev
+```
+
+Open [localhost:5173](http://localhost:5173), or the URL printed by the command. For a local production build from the same checkout, run `pnpm build` and then `pnpm start`, and open [127.0.0.1:7860](http://127.0.0.1:7860). Keep local configuration, keys and runtime data out of Git.
+
+### Configure models and enter the demo
+
+1. Open **Connections** and add an OpenAI-compatible connection to your model service. For LM Studio on the same machine, start its local server and use its advertised URL, commonly `http://127.0.0.1:1234/v1`. Enter a key in the app only if the service requires one.
+2. Set each character's **Response provider connection** and **Response model ID** in the character editor, or leave it on the chat model. In **Chat Settings**, use **Individual** group mode for a character world.
+3. Run `node scripts/create-ensemble-world-demo.mjs` to create the three-scene demo with a saved LM Studio connection. If your model IDs differ from the fixture, pass the connection ID and two model IDs as shown in [the demo guide](ENSEMBLE-WORLD.md).
+4. Open **M2 演示 · 翠庭的旧钥匙**. Under **Chat Settings → Autonomous Messaging**, open **Character world** and use **Server character exchanges → Start**. Use **Characters currently present** to speak only to characters in your scene.
+
+### Upstream platform guides
+
+These guides describe the inherited Engine launchers and services. Links to upstream installers and container images do not include the Ensemble commits.
 
 | Platform                 | Guide                                                                                                                                           |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -269,6 +301,8 @@ The full guide library is browsable inside the app: open **Documentation** from 
 
 ## Contributors
 
+Thank you to [Pasta-Devs and the Marinara Engine contributors](https://github.com/Pasta-Devs/Marinara-Engine/graphs/contributors) for the engine this fork builds on. The fork's P0, M1 and M2 changes are recorded in its Git history.
+
 <p align="left">
   <a href="https://github.com/Pasta-Devs/Marinara-Engine/graphs/contributors">
     <img src="https://contrib.rocks/image?repo=Pasta-Devs/Marinara-Engine" alt="Marinara Engine contributors" />
@@ -283,7 +317,7 @@ The full guide library is browsable inside the app: open **Documentation** from 
 
 ## License
 
-Marinara Engine source code is licensed under the [GNU AGPLv3](LICENSE).
+Marinara-Ensemble and the Marinara Engine source it modifies are licensed under the [GNU AGPLv3](LICENSE). The upstream license and copyright notices remain in place. See [Third-party notices](THIRD_PARTY_NOTICES.md) for component licenses, separate asset terms and the limits of the source audit.
 
 Provider icons come from [Lobe Icons](https://github.com/lobehub/lobe-icons) by LobeHub ([MIT](packages/client/src/assets/provider-icons/LICENSE)); see [their notice](packages/client/src/assets/provider-icons/README.md) for the marks Marinara drew itself. Product names and logos are trademarks of their owners. Marinara Engine is not affiliated with them.
 
