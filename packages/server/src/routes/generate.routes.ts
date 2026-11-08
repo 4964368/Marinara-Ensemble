@@ -451,7 +451,6 @@ import {
   isSharedCharacterMessage,
   messageCharacterAccess,
   readRestrictedChatIds,
-  resolveMessageVisibility,
 } from "../services/generation/message-access.js";
 import { isSentSelfieAttachment } from "../services/generation/prompt-attachments.js";
 import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
@@ -1411,7 +1410,12 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
       });
     }
     const earlyMeta = roomGenerationMetadata(parseExtra(chat.metadata));
-    if (input.autonomous && readGroupAutonomy(input.chatId, chat.metadata) && !groupTurn) {
+    if (
+      input.autonomous &&
+      !groupTurn &&
+      (readGroupAutonomy(input.chatId, chat.metadata) ||
+        (requestChatMode === "conversation" && (await readWorld(app.db, chat.id))))
+    ) {
       return rejectGenerationOutput(reply, 409, { error: "Group exchanges are managed by the server" });
     }
     // One reading per request: the restored speaker, the identity and the context all follow it (#6959).
@@ -1429,7 +1433,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
         });
       }
       try {
-        const recipients = resolveMessageVisibility(input.messageVisibility, chat);
+        const recipients = await resolveWorldMessageVisibility(app.db, input.messageVisibility, chat);
         if (!input.forCharacterId && requestChatMode === "conversation" && recipients?.length === 1) {
           input.forCharacterId = recipients[0] ?? null;
         }
@@ -1912,6 +1916,42 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
     if (!baseUrl) {
       releaseActiveGeneration();
       return rejectGenerationOutput(reply, 400, { error: "No base URL configured for this connection" });
+    }
+    if (groupTurn?.worldSessionId) {
+      try {
+        const cards = new Map(
+          await Promise.all(
+            worldRoster(chat).map(async (id) => {
+              const row = await chars.getById(id, chat.id);
+              return [id, parseJsonField<Partial<CharacterData>>(row?.data, {})] as const;
+            }),
+          ),
+        );
+        const player = await resolveChatUserIdentity(chars, {
+          id: chat.id,
+          personaId: chat.personaId,
+          personaCharacterId: chat.personaCharacterId,
+          mode: requestChatMode,
+        });
+        const result = await runWorldGeneration({
+          db: app.db,
+          chat,
+          cards,
+          playerName: player?.name,
+          turn: groupTurn,
+          conn,
+          baseUrl,
+          signal: generationSignal,
+          outputCap: GROUP_AUTONOMY_MAX_OUTPUT,
+          timeoutMs: chatGenerationTimeoutMs,
+          debug: requestDebug || isDebugAgentsEnabled() || earlyMeta.debugMode === true,
+        });
+        if (result.error) return rejectGenerationOutput(reply, result.status, { error: result.error });
+        if (result.message) sendSseEvent(reply, { type: "message_saved", data: result.message });
+        return endGenerationOutput(reply);
+      } finally {
+        releaseActiveGeneration();
+      }
     }
     // Impersonate's own "If it fails" Model answers first; unset, the Main fallback does.
     const impersonateFallbackConnection = impersonateConnectionOverride
@@ -16618,3 +16658,9 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
   await registerRawRoute(app);
   await registerRetryAgentsRoute(app, activeCustomLorebookReadBehindRuns, activeAgentRuns);
 }
+import { runWorldGeneration } from "../services/conversation/ensemble-world-generation.js";
+import {
+  readWorld,
+  resolveWorldMessageVisibility,
+  worldRoster,
+} from "../services/conversation/ensemble-world.storage.js";

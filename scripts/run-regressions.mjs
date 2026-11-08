@@ -23,6 +23,8 @@ function repositoryRelative(file) {
 }
 
 export function regressionTimeoutMs(relativePath) {
+  // World simulation crosses live scheduler ticks, a pause interval and a store reopen.
+  if (relativePath === 'scripts/regressions/ensemble-world.regression.ts') return 90_000;
   if (relativePath === 'scripts/regressions/server-signal-shutdown.regression.ts') {
     // 20s main-server phase + six sequential 40s PTY bounds + 10s setup/cleanup margin.
     return 270_000;

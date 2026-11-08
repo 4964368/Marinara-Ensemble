@@ -82,6 +82,7 @@ export interface EnsembleWorldView {
   id: string;
   minute: number;
   scenes: EnsembleWorldSettings["scenes"];
+  goals: EnsembleWorldSettings["goals"];
   playerSceneId: string;
   characters: Array<{
     id: string;

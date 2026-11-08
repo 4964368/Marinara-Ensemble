@@ -1,8 +1,5 @@
-import {
-  isSharedCharacterMessage,
-  preserveMessageAclHistory,
-  resolveMessageVisibility,
-} from "../generation/message-access.js";
+import { isSharedCharacterMessage, preserveMessageAclHistory } from "../generation/message-access.js";
+import { resolveWorldMessageVisibility } from "../conversation/ensemble-world.storage.js";
 import { isDeepStrictEqual } from "node:util";
 import { currentRoomGeneration, resolveRoomGenerationPolicy } from "../multiplayer/generation-policy.js";
 // ──────────────────────────────────────────────
@@ -2409,7 +2406,7 @@ export function createChatsStorage(db: DB) {
       if (input.messageVisibility) {
         const chat = await this.getById(input.chatId);
         if (!chat) throw new Error("Chat not found");
-        const recipients = resolveMessageVisibility(input.messageVisibility, chat);
+        const recipients = await resolveWorldMessageVisibility(db, input.messageVisibility, chat);
         delete extra.visibleToCharacterIds;
         extra.visibilityManual = true;
         if (recipients !== undefined) {

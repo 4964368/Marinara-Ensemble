@@ -8,6 +8,8 @@ import { isSharedCharacterMessage } from "../generation/message-access.js";
 import { parseExtra } from "../generation/prompt-attachments.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { getEffectiveCurrentStatus } from "./schedule.service.js";
+import { hasNewWorldInput } from "./ensemble-world.service.js";
+import { readWorld, syncWorldActors, worldActorPresent } from "./ensemble-world.storage.js";
 
 const POLL_MS = 2_000;
 export const GROUP_AUTONOMY_MAX_OUTPUT = 512;
@@ -17,6 +19,8 @@ export type GroupAutonomyTurn = {
   chatId: string;
   characterId: string;
   anchorId: string;
+  worldSessionId?: string;
+  worldEventId?: string;
   signal: AbortSignal;
   reserve: (tokens: number) => Promise<boolean>;
   duplicate: (text: string) => boolean;
@@ -158,7 +162,9 @@ export function startGroupAutonomy(app: FastifyInstance) {
     if (meta.sceneStatus === "active") return;
     const active = (app as unknown as { activeGenerations?: Map<string, unknown> }).activeGenerations;
     if (active?.has(chat.id)) return;
-    const transcript = await chats.listMessagesPaginated(chat.id, 30);
+    const world = await readWorld(app.db, chat.id);
+    if (world) syncWorldActors(world, chat);
+    const transcript = world ? [] : await chats.listMessagesPaginated(chat.id, 30);
     const publicMessages = transcript.filter((message) => {
       const extra = parseExtra(message.extra);
       return (
@@ -174,23 +180,33 @@ export function startGroupAutonomy(app: FastifyInstance) {
       Date.parse(anchor?.createdAt ?? "") || 0,
       Date.parse(newestUser?.createdAt ?? "") || 0,
     );
-    if (!anchor || Date.now() - lastActivityAt < state.limits.intervalSeconds * 1000) return;
+    if (!world && (!anchor || Date.now() - lastActivityAt < state.limits.intervalSeconds * 1000)) return;
 
     const ids = roster(chat);
     const { schedules, statusOverrides } = await chats.resolveConversationPresenceState(chat.id);
-    const previous = ids.indexOf(anchor.characterId ?? state.lastSpeakerId ?? "");
-    const characterId = Array.from(
+    const previous = ids.indexOf(world?.lastActorId ?? anchor?.characterId ?? state.lastSpeakerId ?? "");
+    const candidates = Array.from(
       { length: ids.length },
       (_, offset) => ids[(previous + offset + 1) % ids.length]!,
-    ).find((id) => {
+    ).filter((id) => {
       if (
-        id === anchor.characterId ||
+        (!world && id === anchor?.characterId) ||
         (Array.isArray(meta.inactiveCharacterIds) && meta.inactiveCharacterIds.includes(id))
       )
         return false;
       const { status } = getEffectiveCurrentStatus(schedules[id] ?? null, statusOverrides[id], new Date(), "");
       return status !== "offline" && status !== "dnd";
     });
+    let characterId: string | undefined;
+    for (const id of candidates) {
+      if (world) {
+        const actor = world.actors.find((entry) => entry.id === id);
+        if (!actor || !worldActorPresent(chat, actor)) continue;
+        if (actor.restUntil > Date.now() && !(await hasNewWorldInput(app.db, chat, actor))) continue;
+      }
+      characterId = id;
+      break;
+    }
     if (!characterId) return;
 
     let reservation = 0;
@@ -198,7 +214,8 @@ export function startGroupAutonomy(app: FastifyInstance) {
     const turn: GroupAutonomyTurn = {
       chatId: chat.id,
       characterId,
-      anchorId: anchor.id,
+      anchorId: anchor?.id ?? "",
+      worldSessionId: world ? state.id : undefined,
       signal,
       duplicate: (text) => recent.has(normalizedReply(text)),
       reserve: async (tokens) => {
@@ -255,12 +272,12 @@ export function startGroupAutonomy(app: FastifyInstance) {
         await update((latest) => ({
           ...latest,
           tokensUsed: latest.tokensUsed - reservation + (turn.usage ?? reservation),
-          ...(saved ? { lastMessageId: saved, lastSpeakerId: characterId } : {}),
+          ...(saved ? { lastMessageId: saved, ...(world ? {} : { lastSpeakerId: characterId }) } : {}),
         }));
       }
       if (saved) {
         await chats.markAutonomousUnread(chat.id, { characterId });
-      } else if (!signal.aborted && statusCode !== 409) {
+      } else if (!turn.worldEventId && !signal.aborted && statusCode !== 409) {
         await halt(turn.halt ?? (statusCode >= 400 || reservation || failed ? "failure" : "unavailable"));
       }
     } catch (error) {
