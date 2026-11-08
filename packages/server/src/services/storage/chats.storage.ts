@@ -1,5 +1,5 @@
 import { isSharedCharacterMessage, preserveMessageAclHistory } from "../generation/message-access.js";
-import { resolveWorldMessageVisibility } from "../conversation/ensemble-world.storage.js";
+import { preserveEnsembleWorldMarker, resolveWorldMessageVisibility } from "../conversation/ensemble-world.storage.js";
 import { isDeepStrictEqual } from "node:util";
 import { currentRoomGeneration, resolveRoomGenerationPolicy } from "../multiplayer/generation-policy.js";
 // ──────────────────────────────────────────────
@@ -1890,7 +1890,16 @@ export function createChatsStorage(db: DB) {
         const [previous] = await tx.select({ metadata: chats.metadata }).from(chats).where(eq(chats.id, id)).limit(1);
         await tx
           .update(chats)
-          .set({ metadata: JSON.stringify(preserveMessageAclHistory(previous?.metadata, metadata)), updatedAt: now() })
+          .set({
+            metadata: JSON.stringify(
+              preserveEnsembleWorldMarker(
+                id,
+                previous?.metadata,
+                preserveMessageAclHistory(previous?.metadata, metadata),
+              ),
+            ),
+            updatedAt: now(),
+          })
           .where(eq(chats.id, id));
       });
       return this.getById(id);
@@ -1989,7 +1998,11 @@ export function createChatsStorage(db: DB) {
           room.signal?.throwIfAborted();
           protectRoomMetadata(patch, opts.allowRoomKeys);
         }
-        const merged = preserveMessageAclHistory(current, mergeMetadataPatch(current, patch));
+        const merged = preserveEnsembleWorldMarker(
+          id,
+          current,
+          preserveMessageAclHistory(current, mergeMetadataPatch(current, patch)),
+        );
         // Explicitly detaching a pinned book resets its chat-local entry state.
         // Temporary exclusions retain it so disabling/re-enabling a book is reversible.
         if (Array.isArray(patch.activeLorebookIds) && Array.isArray(current.activeLorebookIds)) {

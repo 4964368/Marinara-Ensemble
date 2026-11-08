@@ -3,6 +3,7 @@ import {
   hasRestrictedMessageHistory,
   resolveMessageVisibility,
 } from "../services/generation/message-access.js";
+import { WORLD_CHAT_MARKER } from "../services/conversation/ensemble-world.storage.js";
 // ──────────────────────────────────────────────
 // Routes: Chats
 // ──────────────────────────────────────────────
@@ -1806,6 +1807,9 @@ export async function chatsRoutes(app: FastifyInstance) {
     const incoming = req.body as Record<string, unknown>;
     if (Object.hasOwn(incoming, "groupAutonomy")) {
       return reply.status(400).send({ error: "Use the group autonomy controls to change the server scheduler" });
+    }
+    if (Object.hasOwn(incoming, WORLD_CHAT_MARKER)) {
+      return reply.status(400).send({ error: "Use the world controls to configure a world" });
     }
     let attachmentPatch: Parameters<typeof mergeAgentLorebookAttachments>[1] | undefined;
     if (Object.prototype.hasOwnProperty.call(incoming, "agentLorebookAttachments")) {

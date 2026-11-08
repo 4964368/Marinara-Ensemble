@@ -1,5 +1,5 @@
 import { readGroupAutonomy, registerGroupAutonomyRoutes } from "../services/conversation/group-autonomy.service.js";
-import { readWorld } from "../services/conversation/ensemble-world.storage.js";
+import { hasEnsembleWorld } from "../services/conversation/ensemble-world.storage.js";
 import { registerEnsembleWorldRoutes } from "./conversation/ensemble-world.routes.js";
 import { canReadCharacterMessage, messageCharacterAccess } from "../services/generation/message-access.js";
 import { resolveSceneBusyCharacterIds } from "../services/generation/scene-context-runtime.js";
@@ -1018,7 +1018,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     }
     const chat = await chats.getById(chatId);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
-    if (readGroupAutonomy(chatId, chat.metadata) || (await readWorld(app.db, chatId))) {
+    if (readGroupAutonomy(chatId, chat.metadata) || hasEnsembleWorld(chatId, chat.metadata)) {
       return reply.send({ shouldTrigger: false, characterIds: [], reason: "server_group_autonomy", inactivityMs: 0 });
     }
 
@@ -1294,7 +1294,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     const { chatId, lastSpeakerCharId } = req.body;
     const chat = await chats.getById(chatId);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
-    if (readGroupAutonomy(chatId, chat.metadata) || (await readWorld(app.db, chatId))) {
+    if (readGroupAutonomy(chatId, chat.metadata) || hasEnsembleWorld(chatId, chat.metadata)) {
       return reply.send({ shouldTrigger: false, characterIds: [], reason: "server_group_autonomy", inactivityMs: 0 });
     }
 

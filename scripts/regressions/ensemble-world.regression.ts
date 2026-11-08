@@ -161,6 +161,8 @@ try {
       ...payload,
     });
   assert.equal((await send({ autonomous: true, forCharacterId: a })).statusCode, 409);
+  const legacy = await post(api + "autonomous/exchange", { chatId: chat.id, lastSpeakerCharId: b });
+  assert.equal(legacy.json().reason, "server_group_autonomy");
   const citation = (dossier: Dossier, text: string) => {
     const found = [...dossier.recentEvidence, ...dossier.memories.flatMap((m) => m.evidence)].find((item) =>
       item.text?.includes(text),
@@ -328,14 +330,20 @@ try {
   assert.match(JSON.stringify(await getPlayerView()), /check the shelves/);
   assert.equal((await runtime.chats.listMessages(chat.id)).filter(({ content }) => content === visibleText).length, 1);
 
-  // Resume after a restart, cancel a provider already in flight, and reject stale proposals.
+  // Reopen a running world without a new resume request, then cancel a provider already in flight.
   const beforeHold = calls.length;
   hold = true;
   const resumed = await control("resume");
+  await runtime.app.close();
+  await runtime.db._fileStore.close();
+  runtime = await open();
+  assert.equal((await state()).status, "running");
+  assert.equal((await state()).id, resumed.id);
   await runtime.chats.patchMetadata(chat.id, (meta) => ({
     groupAutonomy: { ...(meta.groupAutonomy as Record<string, unknown>), lastAttemptAt: 0 },
   }));
   await waitFor(() => calls.length > beforeHold);
+  // Even in a live run, a proposal prepared before a committed action cannot be replayed.
   assert.equal(
     await executeWorldDecision(runtime.db, {
       chatId: chat.id,

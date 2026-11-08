@@ -4,6 +4,12 @@ import {
   registerGroupAutonomyRunner,
   type GroupAutonomyTurn,
 } from "../services/conversation/group-autonomy.service.js";
+import { runWorldGeneration } from "../services/conversation/ensemble-world-generation.js";
+import {
+  hasEnsembleWorld,
+  resolveWorldMessageVisibility,
+  worldRoster,
+} from "../services/conversation/ensemble-world.storage.js";
 import { DISABLED_IMAGE_CAPTIONING } from "../services/generation/image-captioning-runtime.js";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -1413,8 +1419,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
     if (
       input.autonomous &&
       !groupTurn &&
-      (readGroupAutonomy(input.chatId, chat.metadata) ||
-        (requestChatMode === "conversation" && (await readWorld(app.db, chat.id))))
+      (readGroupAutonomy(input.chatId, chat.metadata) || hasEnsembleWorld(chat.id, chat.metadata))
     ) {
       return rejectGenerationOutput(reply, 409, { error: "Group exchanges are managed by the server" });
     }
@@ -16658,9 +16663,3 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
   await registerRawRoute(app);
   await registerRetryAgentsRoute(app, activeCustomLorebookReadBehindRuns, activeAgentRuns);
 }
-import { runWorldGeneration } from "../services/conversation/ensemble-world-generation.js";
-import {
-  readWorld,
-  resolveWorldMessageVisibility,
-  worldRoster,
-} from "../services/conversation/ensemble-world.storage.js";

@@ -9,7 +9,7 @@ import { parseExtra } from "../generation/prompt-attachments.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { getEffectiveCurrentStatus } from "./schedule.service.js";
 import { hasNewWorldInput } from "./ensemble-world.service.js";
-import { readWorld, syncWorldActors, worldActorPresent } from "./ensemble-world.storage.js";
+import { hasEnsembleWorld, readWorld, syncWorldActors, worldActorPresent } from "./ensemble-world.storage.js";
 
 const POLL_MS = 2_000;
 export const GROUP_AUTONOMY_MAX_OUTPUT = 512;
@@ -162,7 +162,12 @@ export function startGroupAutonomy(app: FastifyInstance) {
     if (meta.sceneStatus === "active") return;
     const active = (app as unknown as { activeGenerations?: Map<string, unknown> }).activeGenerations;
     if (active?.has(chat.id)) return;
-    const world = await readWorld(app.db, chat.id);
+    const worldManaged = hasEnsembleWorld(chat.id, chat.metadata);
+    const world = worldManaged ? await readWorld(app.db, chat.id) : null;
+    if (worldManaged && !world) {
+      await halt("unavailable");
+      return;
+    }
     if (world) syncWorldActors(world, chat);
     const transcript = world ? [] : await chats.listMessagesPaginated(chat.id, 30);
     const publicMessages = transcript.filter((message) => {

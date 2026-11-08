@@ -98,6 +98,18 @@ export function worldChatEligible(chat: WorldChat): boolean {
   );
 }
 
+// Legacy idle polling must not hydrate a chat's lazy transcript shard just to
+// discover that it has no world. The marker is bound to the owning chat ID so
+// copied/imported metadata cannot opt another conversation in.
+export const WORLD_CHAT_MARKER = "ensembleWorldChatId";
+export function hasEnsembleWorld(chatId: string, metadata: unknown): boolean {
+  return parseExtra(metadata)[WORLD_CHAT_MARKER] === chatId;
+}
+
+export function preserveEnsembleWorldMarker(chatId: string, previous: unknown, next: Record<string, unknown>) {
+  return hasEnsembleWorld(chatId, previous) ? { ...next, [WORLD_CHAT_MARKER]: chatId } : next;
+}
+
 export function worldActorPresent(chat: WorldChat, actor: WorldActor): boolean {
   const inactive = parseExtra(chat.metadata).inactiveCharacterIds;
   return worldRoster(chat).includes(actor.id) && !(Array.isArray(inactive) && inactive.includes(actor.id));
@@ -127,7 +139,7 @@ export async function readWorld(db: DB, chatId: string): Promise<WorldState | nu
 }
 
 export async function resolveWorldMessageVisibility(db: DB, visibility: MessageVisibilityInput, chat: WorldChat) {
-  if (visibility.type === "present" && chat.mode === "conversation") {
+  if (visibility.type === "present" && chat.mode === "conversation" && hasEnsembleWorld(chat.id, chat.metadata)) {
     const world = await readWorld(db, chat.id);
     if (world && worldChatEligible(chat)) {
       syncWorldActors(world, chat);

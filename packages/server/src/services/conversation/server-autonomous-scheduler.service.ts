@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { readGroupAutonomy, startGroupAutonomy } from "./group-autonomy.service.js";
+import { hasEnsembleWorld } from "./ensemble-world.storage.js";
 import { logger } from "../../lib/logger.js";
 import { logRateLimited } from "../../lib/log-rate-limit.js";
 import { androidLocalAuthInjectHeaders } from "../../middleware/android-local-auth.js";
@@ -79,7 +80,12 @@ function parseMetadata(raw: RawChat["metadata"]): Record<string, unknown> {
 }
 
 function shouldConsiderChat(chat: RawChat): boolean {
-  if (chat.mode !== "conversation" || readGroupAutonomy(chat.id, chat.metadata)) return false;
+  if (
+    chat.mode !== "conversation" ||
+    readGroupAutonomy(chat.id, chat.metadata) ||
+    hasEnsembleWorld(chat.id, chat.metadata)
+  )
+    return false;
   const meta = parseMetadata(chat.metadata);
   if (meta.internalAssistant === "professor-mari") return false;
   if (meta.multiplayerSetup === true && !meta.multiplayer) return false;
