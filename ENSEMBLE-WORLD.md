@@ -1,42 +1,42 @@
-# M2 character world
+# M2 角色世界
 
-M2 is opt-in per Individual Conversation with at least two characters. It uses the M1 character model selection and server exchange controls. In a configured world, the scheduler asks one character to propose a single action; the server validates and applies it. A Conversation without a world retains its existing chat and exchange behavior.
+角色世界可在至少有两个角色的独立（Individual）对话中启用。它复用 M1 的角色模型选择和服务端互动控制。世界启动后，调度器每轮让一个角色提出行动，由服务端校验并执行。未启用世界的聊天继续使用原有的群聊与角色互动行为。
 
-## Start and enter the demo
+## 启动并进入演示
 
-1. In the repository run `pnpm install`, then `pnpm dev`. Open the Vite address printed in the terminal (normally [localhost:5173](http://localhost:5173)); the API normally listens on [127.0.0.1:7860](http://127.0.0.1:7860).
-2. Keep an LM Studio connection saved in Marinara. Run `node scripts/create-ensemble-world-demo.mjs` to add **M2 演示 · 翠庭的旧钥匙** to Conversations. The script uses the saved local connection and prefers the `ensemble-coder` and `ensemble-deepseek` model IDs. If your names differ, run `node scripts/create-ensemble-world-demo.mjs http://127.0.0.1:7860 <connection-id> <model-a> <model-b>`. The script creates one conversation, three AI characters and a player persona. Running it again reuses the existing demo.
-3. Open the demo, then **Chat Settings → Autonomous Messaging → Character world**. The three scenes are 庭院, 书房 and 客厅. Use **Your scene** to move and **Server character exchanges → Start** to start autonomous turns. Characters can act before you send a message. The provided goals encourage 林澈 to visit the study and 许岚 to follow her; the models choose what to do.
-4. To speak only to the characters with you, use **Characters currently present** in the composer. **Public** is a broadcast; selecting a named recipient is private even across scenes. **Events you witnessed** lists events the player could observe at the time. Visiting a room later does not reveal its previous private conversations.
-5. Close and reopen the browser to see the stored timeline. **Pause** cancels a pending turn and prevents new inference until resumed. **Stop** ends the run. After the budget pauses the run, stop and start again with a new budget; the world stays in place.
+1. 在仓库目录运行 `pnpm install`，然后运行 `pnpm dev`。前端通常在 [localhost:5173](http://localhost:5173)，API 通常在 [127.0.0.1:7860](http://127.0.0.1:7860)。
+2. 在 Marinara 中保存 LM Studio 连接。另开终端，在仓库目录运行 `node scripts/create-ensemble-world-demo.mjs`，将 **M2 演示 · 翠庭的旧钥匙** 添加到对话列表。脚本优先使用 `ensemble-coder` 和 `ensemble-deepseek`。如果你的模型名称不同，运行 `node scripts/create-ensemble-world-demo.mjs http://127.0.0.1:7860 <连接ID> <模型A> <模型B>`。脚本会创建一场对话、三个 AI 角色和一个玩家人设；再次运行会复用已有演示。
+3. 打开演示，在 **聊天设置** 的自治消息区域展开 **角色世界**。演示有庭院、书房和客厅三个场景。通过 **你所在的场景** 移动，通过 **服务端角色互动 → 启动** 开始自治轮次。角色可以在你发消息前行动。演示目标会鼓励林澈去书房、许岚跟进，实际行动由模型决定。
+4. 想只和身边的角色说话时，发送前选择 **当前在场角色**。**公开** 会广播消息；选中某个收件人可以跨场景私聊。事件列表只展示你当时可以见证的事件。之后走进一个房间，不会看到它先前的私聊。
+5. 关闭并重新打开浏览器，可以继续查看已保存的时间线。**暂停** 会取消进行中的轮次并阻止新推理，直到恢复。**停止** 会结束本轮运行。预算耗尽时，先停止再启动以分配新预算，世界状态仍然保留。
 
-To configure your own world, choose Individual mode in a Conversation with at least two characters, open **Character world**, and add one or more named scenes. The first scene is the initial location. You can edit names, add scenes, and set a goal for each actor while stopped or paused. An occupied scene cannot be removed. Normal group messages, private messages and model assignments are still available.
+要配置自己的世界，在至少有两个角色的对话中选择独立模式，打开 **角色世界**，再添加一个或多个有名称的场景。第一个场景是起点。停止或暂停后，可以修改名称、增加场景并为每个角色设置目标。有人占用的场景不能删除。常规群聊、私聊和角色模型设置仍可使用。
 
-## Contract for M3
+## M3 接口
 
-The shared client types are defined in [ensemble-world.schema.ts](packages/shared/src/schemas/ensemble-world.schema.ts). These are local app endpoints under the existing Conversation route:
+共享类型定义见 [ensemble-world.schema.ts](packages/shared/src/schemas/ensemble-world.schema.ts)。下列本地 API 位于现有的对话路由下：
 
-| Endpoint | Request | Response |
+| 接口 | 请求 | 响应 |
 | --- | --- | --- |
-| `GET /api/conversation/ensemble-world/:chatId` | Optional `?before=<minute>` | `{ world: EnsembleWorldView \| null }` |
-| `POST /api/conversation/ensemble-world/:chatId` | `{ action: "configure", settings: { scenes: [{id, name}], goals: [{characterId, goal}] } }` or `{ action: "move", sceneId }` | Updated player view; `409` if the requested change is unavailable |
-| `GET /api/conversation/group-autonomy/:chatId` | None | `{ state }`, including status, pause reason, limits and usage |
-| `POST /api/conversation/group-autonomy/:chatId` | `{ action: "start", limits: { intervalSeconds, maxCalls, maxTokens } }`, or `pause`, `resume`, `stop` as the action | Updated run state |
+| `GET /api/conversation/ensemble-world/:chatId` | 可选 `?before=<minute>` | `{ world: EnsembleWorldView \| null }` |
+| `POST /api/conversation/ensemble-world/:chatId` | `{ action: "configure", settings: { scenes: [{id, name}], goals: [{characterId, goal}] } }` 或 `{ action: "move", sceneId }` | 更新后的玩家视图；无法执行时返回 `409` |
+| `GET /api/conversation/group-autonomy/:chatId` | 无 | `{ state }`，包含状态、暂停原因、限制和使用量 |
+| `POST /api/conversation/group-autonomy/:chatId` | `{ action: "start", limits: { intervalSeconds, maxCalls, maxTokens } }`；也可将 `action` 设为 `pause`、`resume` 或 `stop` | 更新后的运行状态 |
 
-World views include the world ID, simulation minute, scene definitions, player-authored goals, current player scene, visible actor activity, recent observable interactions and a page of up to 30 witnessed events. Use `nextBefore` for the next page. A character outside the player's sight has `present: false` and no exposed location or activity. A scene can be visible while its earlier dialogue remains private. The relationship list reflects witnessed exchanges; the actual directional judgments are available only to their owning characters. A visible speech event may carry the existing chat message ID.
+世界视图包括世界 ID、模拟分钟、场景定义、玩家设置的目标、玩家当前场景、可见的角色活动、最近可观察的互动，以及每页最多 30 条见证事件。使用 `nextBefore` 获取下一页。不在玩家视野中的角色标为 `present: false`，且不返回其位置或活动。场景可以可见，但它早先发生的私聊仍保密。关系列表反映玩家见证的互动；角色对彼此的方向性判断只对拥有判断的角色可见。可见的发言事件可以带有现有的聊天消息 ID。
 
-The server keeps three separate views:
+服务端维护三种独立视图：
 
-- **World truth:** scene positions and the journal of actions and their results. Dialogue in the journal records what was said; it does not turn a statement into a fact.
-- **Character knowledge:** the actor's card and goal, their own scene and company, evidence they witnessed or were sent, and their own memories and appraisals. The request never includes the whole world or another actor's memory. Reflections and relationship appraisals must cite known evidence; a reflection may be tentative, believed, disputed or corrected.
-- **Player view:** visible positions and player-witnessed events, together with the configuration the player authored. There is no public endpoint to request an arbitrary actor's dossier.
+- **世界事实：** 场景位置、行动和行动结果。记录里的对话只表示角色说过的话，不表示内容属实。
+- **角色所知：** 角色卡、目标、所在场景、在场同伴、亲历或收到的证据，以及自己的记忆和判断。请求不包含整个世界，也不包含其他角色的记忆。反思和关系判断必须引用已知证据；反思可标记为暂定、相信、有争议或已纠正。
+- **玩家视图：** 玩家可见的位置、见证的事件，以及玩家自己配置的内容。没有公开接口可以查询任意角色的私有记录。
 
-## Persistence, permissions and limits
+## 持久化、权限与限制
 
-World state and events use optional chat-keyed tables in the existing file store. Existing chats load without these records. Events and state commit together; an action proposed against a stale world revision cannot replay. Player-visible dialogue uses the existing transcript and message audience; dialogue wholly outside the player's perspective stays in its event. A retelling creates a new event with its own recipient and words. The source link stays internal. Memory and relationship evidence linked to a transcript message is checked again on recall, including its current ACL and content fingerprint.
+世界状态与事件保存在现有文件存储的可选表中，以聊天为键。老聊天没有这些记录也可以加载。事件与状态一起提交；基于旧世界版本提出的行动不能重复执行。玩家可见的对话沿用原有聊天记录和消息受众；完全在玩家视角之外的对话只保存在事件中。转述是带有新接收者和新内容的事件，原始来源链接保留在服务端内部。召回和聊天消息关联的记忆或关系证据时，会重新校验当前访问权限与内容指纹。
 
-The M1 scheduler retains interval and call limits, pre-reserves tokens, and allows one managed group turn at a time. M2 adds duplicate action checks and a cooldown after waiting or consecutive unproductive turns. Relevant new events can wake an actor. A model request failure pauses the run. No additional summarizer or embedding calls are required to run a world.
+M1 调度器继续遵守间隔和调用次数限制，预留 Token，一次只处理一个托管群聊轮次。M2 增加重复行动检测，以及等待或连续无进展后的冷却。相关新事件可唤醒角色。模型请求失败会暂停运行。世界运转不需要额外的摘要或向量嵌入调用。
 
-The first version uses bounded lexical recall and event-linked notes, so long-running worlds can age out older memories. Private world events stay within the source Conversation and are not included in ordinary transcript exports. The engine controls who receives each request and retelling. As part of the roleplay, an authorized recipient can intentionally retell or misrepresent what they learned.
+首版使用有上限的词项检索和事件关联笔记；运行较久的世界可能淘汰较早的记忆。私有世界事件留在原对话中，不会进入普通聊天记录导出。服务端控制每次请求和转述的受众。在角色扮演中，有权获知信息的角色仍可选择转述或歪曲它。
 
-Run `node scripts/run-regressions.mjs --filter scripts/regressions/ensemble-world.regression.ts` after building shared types (`pnpm build:shared`). This proof uses an isolated file store and two Mock model IDs, captures the actual provider requests, and checks scene movement, retelling, memory recall and revocation, asymmetric relationships, restart, and pause.
+测试前运行 `pnpm build:shared`，再执行 `node scripts/run-regressions.mjs --filter scripts/regressions/ensemble-world.regression.ts`。该测试使用隔离的文件存储和两个 Mock 模型 ID，记录实际的服务商请求，覆盖场景移动、转述、记忆召回与撤权、非对称关系、重启和暂停。

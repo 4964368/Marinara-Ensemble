@@ -4,7 +4,7 @@ This inventory covers the Marinara-Ensemble source checkout based on Marinara En
 
 ## Upstream source and assets
 
-[Marinara Engine](https://github.com/Pasta-Devs/Marinara-Engine) is by Pasta-Devs and its contributors. The [GNU AGPL version 3](LICENSE), upstream source notices, [attributions](README.md#contributors) and [trademark policy](TRADEMARKS.md) are preserved. The tracked Windows launcher is inherited from that same commit; its [source and build script](win/launcher/) are present. No new launcher, installer, APK, container image, model weights or compiled application bundles are included in this source handoff.
+[Marinara Engine](https://github.com/Pasta-Devs/Marinara-Engine) is by Pasta-Devs and its contributors. The [GNU AGPL version 3](LICENSE), upstream source notices, [attributions](README.md#社区与致谢) and [trademark policy](TRADEMARKS.md) are preserved. The tracked Windows launcher is inherited from that same commit; its [source and build script](win/launcher/) are present. No new launcher, installer, APK, container image, model weights or compiled application bundles are included in this source handoff.
 
 | Component | Version or provenance | License and credits |
 | --- | --- | --- |
