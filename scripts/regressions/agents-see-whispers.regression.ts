@@ -574,20 +574,17 @@ try {
   await generate("Alice answers.", undefined, { userMessage: "Who goes next?" });
   assert.equal((await chats.listMessages(chat.id)).at(-1)!.characterId, alice.id);
   for (const smart of [decisionStates.at(-1) ?? "", selectorPrompts.at(-1) ?? ""]) {
-    assert(inOrder(smart, "Alice smiles.", "[Private whisper to Bob: SMART_REPLY_SECRET]", "Then waits."), smart);
-    assert(smart.includes("[Private whisper to Bob: SMART_USER_SECRET]"), smart);
-    assert(!smart.includes("[Private whisper]"), "a whisper-only message reads as its whisper, not a placeholder");
+    assert(inOrder(smart, "Alice smiles.", "Then waits."), smart);
+    assert(!/SMART_(REPLY|USER)_SECRET/u.test(smart), "shared Smart selectors receive only the public transcript");
   }
   assert(!/SMART_(REPLY|USER)_SECRET/u.test(mainPrompts.at(-1)!), "Alice, not a recipient, gets neither whisper");
-  // The chat-model selector gives a turn's text and each whisper 900 characters apiece, so a long whisper, such as
-  // a vision, does not crowd the question asked aloud out of the line.
-  const vision = `LONG_VISION${"x".repeat(1_050)}`;
+  const vision = "LONG_VISION" + "x".repeat(1_050);
   await generate("Alice answers.", undefined, {
-    userMessage: `[whisper: character="Bob" text="${vision}"] Alice, what do you think?`,
+    userMessage: '[whisper: character="Bob" text="' + vision + '"] Alice, what do you think?',
   });
   const longTurn = selectorPrompts.at(-1)!;
-  assert(longTurn.includes(`[Private whisper to Bob: ${vision.slice(0, 900)}] Alice, what do you think?`), longTurn);
-  assert(!longTurn.includes(vision.slice(0, 901)), "the whisper is cut to its own 900 characters");
+  assert(longTurn.includes("Alice, what do you think?"), longTurn);
+  assert(!longTurn.includes("LONG_VISION"), "Smart does not receive private whisper content");
   await chats.patchMetadata(chat.id, { groupResponseOrder: "manual" });
 
   // A hosted room shows agent output to every participant, so its agents get no whispers.

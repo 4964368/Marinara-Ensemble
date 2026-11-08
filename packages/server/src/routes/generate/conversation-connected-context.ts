@@ -1,10 +1,11 @@
+import { hasRestrictedMessageHistory, isSharedCharacterMessage } from "../../services/generation/message-access.js";
 import type { WrapFormat } from "@marinara-engine/shared";
 
 import { sanitizeConnectedGameTranscript } from "../../services/generation/generation-text-utils.js";
 import { isConversationCommandEnabled } from "../../services/generation/conversation-command-runtime.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 import { sanitizePromptLeaf } from "../../services/prompt/prompt-escaping.js";
-import { parseGameStateRow } from "./generate-route-utils.js";
+import { isMessageHiddenFromAI, parseGameStateRow } from "./generate-route-utils.js";
 
 type ConnectedChatRow = {
   id: string;
@@ -18,6 +19,7 @@ type ConnectedChatMessage = {
   role?: string | null;
   characterId?: string | null;
   content?: unknown;
+  extra?: unknown;
 };
 
 type ConnectedCharacterRow = {
@@ -62,7 +64,9 @@ export async function resolveConversationConnectedChatContext(args: {
 
   if (connectedChat && connectedChat.mode === "roleplay") {
     const rpMessages = await args.chats.listMessages(connectedChat.id);
-    const recentRp = rpMessages.slice(-20);
+    const recentRp = rpMessages
+      .filter((message) => isSharedCharacterMessage(message) && !isMessageHiddenFromAI(message))
+      .slice(-20);
 
     const rpCharIds: string[] =
       typeof connectedChat.characterIds === "string"
@@ -144,6 +148,9 @@ export async function resolveConversationConnectedChatContext(args: {
       : [];
     const latestSummary = storedSummaries[storedSummaries.length - 1] ?? null;
     const gameMessages = await args.chats.listMessages(connectedChat.id);
+    if (hasRestrictedMessageHistory(connectedChat.metadata, gameMessages)) {
+      return { connectedChatBlock: null, systemPromptAppend: null };
+    }
     const recentGame = gameMessages.slice(-20);
     const latestConnectedState =
       (await args.gameStateStore.getLatestCommitted(connectedChat.id)) ??

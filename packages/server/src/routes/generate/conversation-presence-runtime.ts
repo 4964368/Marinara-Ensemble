@@ -13,6 +13,7 @@ import {
 import type { GenerationPromptMessage } from "../../services/generation/prompt-message-scope.js";
 import { getActiveTurnGame } from "../../services/turn-games/turn-game-runner.service.js";
 import { resolveSceneBusyCharacterIds } from "../../services/generation/scene-context-runtime.js";
+import { isSharedCharacterMessage } from "../../services/generation/message-access.js";
 import { isMessageHiddenFromAI, parseExtra } from "./generate-route-utils.js";
 
 export type ConversationPromptCharacterInfo = {
@@ -302,7 +303,7 @@ export async function resolveConversationPresenceRuntime(args: {
         });
       }
 
-      const refreshed = await args.chats.listMessages(args.chatId);
+      const refreshed = (await args.chats.listMessages(args.chatId)).filter(isSharedCharacterMessage);
       const rStartIdx = findLatestConversationStartIndex(refreshed);
       const rScoped = rStartIdx > 0 ? refreshed.slice(rStartIdx) : refreshed;
       chatMessages = args.supportsHiddenFromAI ? rScoped.filter((message) => !isMessageHiddenFromAI(message)) : rScoped;

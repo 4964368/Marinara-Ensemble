@@ -1,3 +1,4 @@
+import { isSharedCharacterMessage, resolveMessageVisibility } from "../generation/message-access.js";
 import { isDeepStrictEqual } from "node:util";
 import { currentRoomGeneration, resolveRoomGenerationPolicy } from "../multiplayer/generation-policy.js";
 // ──────────────────────────────────────────────
@@ -694,6 +695,7 @@ function freshSwipeMessageExtra(value: unknown): Record<string, unknown> {
   for (const key of [
     "hiddenFromAI",
     "hiddenFromAICharacterIds",
+    "visibleToCharacterIds",
     "autoVisibility",
     "visibilityManual",
     "hiddenFromUser",
@@ -2396,7 +2398,32 @@ export function createChatsStorage(db: DB) {
       const prepare = input.role === "user" ? await userRoleplayPreparer(input.chatId) : null;
       const prepared = prepare?.(input.content, input.extra);
       const content = prepared?.content ?? input.content;
-      const extra = prepared?.extra ?? parseExtraRecord(input.extra);
+      const extra = { ...(prepared?.extra ?? parseExtraRecord(input.extra)) };
+      if (input.messageVisibility) {
+        const chat = await this.getById(input.chatId);
+        if (!chat) throw new Error("Chat not found");
+        const recipients = resolveMessageVisibility(input.messageVisibility, chat);
+        delete extra.visibleToCharacterIds;
+        if (recipients !== undefined) {
+          if (chat.mode !== "roleplay" && chat.mode !== "conversation") {
+            throw new Error("Restricted message visibility is available in Roleplay and Conversation");
+          }
+          extra.visibleToCharacterIds = recipients;
+          extra.visibilityManual = true;
+        }
+      }
+      if (!isSharedCharacterMessage({ extra }) || (extra.hiddenFromAI === true && extra.visibilityManual === true)) {
+        // Set this before writing the message so removing the last restricted source cannot
+        // revive legacy summaries or other derived data with missing provenance.
+        await this.patchMetadata(
+          input.chatId,
+          {
+            hasRestrictedMessageHistory: true,
+            ...(Object.hasOwn(extra, "visibleToCharacterIds") ? { hasExplicitMessageAudience: true } : {}),
+          },
+          { touchUpdatedAt: false },
+        );
+      }
       const id = newId();
       const resolvedTimestamp = resolveTimestamps(timestampOverrides).createdAt;
       const explicitTimestamp = normalizeTimestampOverrides(timestampOverrides)?.createdAt;
@@ -3606,6 +3633,10 @@ export function createChatsStorage(db: DB) {
 
         // Sync the target swipe's extra onto the message.
         const swipeExtra = parseExtraRecord(target.extra);
+        const currentExtra = parseExtraRecord(msg?.extra);
+        if (Object.hasOwn(currentExtra, "visibleToCharacterIds")) {
+          swipeExtra.visibleToCharacterIds = currentExtra.visibleToCharacterIds;
+        }
         await db
           .update(messages)
           .set({

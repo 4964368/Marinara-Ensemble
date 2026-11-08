@@ -33,6 +33,7 @@ export interface SaveGeneratedReplyContext {
   /** The continued message as read before generation, used when it can no longer be read. */
   continueTargetMessage: any;
   advancedMemoryEnabled: boolean;
+  replyAudience?: string[];
 }
 
 export interface SavedGeneratedReply {
@@ -152,26 +153,28 @@ export async function saveGeneratedReply(
           role: input.impersonate ? "user" : "assistant",
           characterId: input.impersonate ? null : targetCharId,
           content,
-          ...(roomAuthority
-            ? {
-                extra: {
-                  multiplayerActor: roomActor
-                    ? { id: roomActor.id, name: roomActor.name, role: roomActor.role }
-                    : { id: null, name: "GM", role: "gm" },
-                  ...(roomAudience
-                    ? {
-                        multiplayerGameAudience: {
-                          roomId: roomAudience.roomId,
-                          participants: roomAudience.participants.map((participant) => ({
-                            id: participant.id,
-                            name: participant.persona.name,
-                          })),
-                        },
-                      }
-                    : {}),
-                },
-              }
-            : {}),
+          ...(ctx.replyAudience
+            ? { extra: { visibleToCharacterIds: ctx.replyAudience, visibilityManual: true } }
+            : roomAuthority
+              ? {
+                  extra: {
+                    multiplayerActor: roomActor
+                      ? { id: roomActor.id, name: roomActor.name, role: roomActor.role }
+                      : { id: null, name: "GM", role: "gm" },
+                    ...(roomAudience
+                      ? {
+                          multiplayerGameAudience: {
+                            roomId: roomAudience.roomId,
+                            participants: roomAudience.participants.map((participant) => ({
+                              id: participant.id,
+                              name: participant.persona.name,
+                            })),
+                          },
+                        }
+                      : {}),
+                  },
+                }
+              : {}),
         });
         saved.push({ content, start, message: savedMsg, activity: [] });
       }

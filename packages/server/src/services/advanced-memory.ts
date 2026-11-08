@@ -1231,7 +1231,7 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
     }
   }
 
-  async function context(chatId: string): Promise<Context> {
+  async function context(chatId: string, allowExplicitAudience = false): Promise<Context> {
     const chat = await chats.getById(chatId);
     if (!chat || (chat.mode !== "roleplay" && chat.mode !== "game")) {
       parsedMessageExtras.delete(chatId);
@@ -1248,6 +1248,13 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
       content: message.role === "user" ? parseRoleplayUserCommands(message.content).content : message.content,
       extra: parsedMessageExtra(chatId, message),
     })) as AdvancedMemoryMessage[];
+    const explicitAudience =
+      metadata.hasExplicitMessageAudience === true ||
+      messages.some((message) => Object.hasOwn(object(message.extra), "visibleToCharacterIds"));
+    if (explicitAudience && !allowExplicitAudience) {
+      throw new Error("Advanced Memory is unavailable for chats with explicit message audiences");
+    }
+    if (explicitAudience) metadata.hasExplicitMessageAudience = true;
     const characterIds = strings(chat.characterIds);
     const names = new Map<string, string>();
     const characterStore = createCharactersStorage(db);
@@ -1267,13 +1274,17 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
           : {};
       names.set(GAME_MASTER_MEMORY_READER_ID, typeof card.name === "string" ? card.name : "Game Master");
     }
+    const settings = effectiveAdvancedMemorySettings(
+      chat.mode,
+      normalizeAdvancedMemorySettings(metadata.advancedMemory),
+    );
     return {
       chatId,
       mode: chat.mode,
       connectionId: chat.connectionId ?? null,
       metadata,
-      settings: effectiveAdvancedMemorySettings(chat.mode, normalizeAdvancedMemorySettings(metadata.advancedMemory)),
-      messages,
+      settings: explicitAudience ? { ...settings, enabled: false } : settings,
+      messages: explicitAudience ? [] : messages,
       characterIds,
       names,
       // A Game chat is one merged story the GM tells, never an individual group chat.
@@ -5949,7 +5960,7 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
   }
 
   async function status(chatId: string): Promise<AdvancedMemoryStatus> {
-    const ctx = await context(chatId);
+    const ctx = await context(chatId, true);
     const allRecords = await records(chatId);
     const deletedSceneIds = new Set(
       sceneRecords(allRecords)
@@ -6538,7 +6549,8 @@ export function createAdvancedMemoryService(db: DB, { includeExcerptsInStatus = 
   }
 
   async function exportTransferRecords(chatId: string, sourceMessages?: readonly AdvancedMemoryMessage[]) {
-    const ctx = await context(chatId);
+    const ctx = await context(chatId, true);
+    if (ctx.metadata.hasExplicitMessageAudience === true) return [];
     const sourceById = new Map((sourceMessages ?? ctx.messages).map((message) => [message.id, message]));
     const current = await records(chatId);
     const indexes = new Map(ctx.messages.map((message, index) => [message.id, index + 1]));

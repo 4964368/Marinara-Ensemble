@@ -39,7 +39,7 @@ import {
   formatConversationDateHistoryMessages,
   formatConversationSummaryHistoryBlock,
 } from "./conversation-prompt-formatting.js";
-import { parseExtra } from "./generate-route-utils.js";
+import { isMessageHiddenFromAI, parseExtra } from "./generate-route-utils.js";
 
 type ConversationHistoryMessage = {
   id?: unknown;
@@ -231,6 +231,7 @@ export async function prepareConversationPromptHistory(args: {
   fallbackBaseUrl?: string;
   summaryEmbeddingOptions?: MemoryRecallEmbeddingOptions;
   summaryVectorizerAvailable?: boolean;
+  skipSharedSummaries?: boolean;
   /** Build a separate LTM input without changing the main prompt's provenance. */
   includeRecallHistory?: boolean;
 }): Promise<{
@@ -261,6 +262,8 @@ export async function prepareConversationPromptHistory(args: {
     personaName: args.personaName,
   });
 
+  if (args.skipSharedSummaries) return { finalMessages, importantMemoryBlock: null };
+
   const historyBuckets = bucketConversationHistory({
     finalMessages,
     chatMessages: args.chatMessages,
@@ -283,6 +286,7 @@ export async function prepareConversationPromptHistory(args: {
   );
   const summarySourceMessages = unfilteredSummarySourceMessages.filter(
     (message, index) =>
+      !isMessageHiddenFromAI(message) &&
       !(
         resolveConversationMembershipHistoryEvent(message) !== null &&
         !hasTaggedConversationMembershipEvent(message) &&

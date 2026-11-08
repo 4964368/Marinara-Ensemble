@@ -1,3 +1,4 @@
+import { canReadCharacterMessage, messageCharacterAccess } from "../services/generation/message-access.js";
 import { resolveSceneBusyCharacterIds } from "../services/generation/scene-context-runtime.js";
 // ──────────────────────────────────────────────
 // Routes: Conversation Mode Services
@@ -1316,6 +1317,15 @@ export async function conversationRoutes(app: FastifyInstance) {
       messages as Array<{ role: string; createdAt?: string; characterId?: string | null }>,
     );
 
+    const anchor = [...messages]
+      .reverse()
+      .find((message) => message.role === "assistant" && message.characterId === lastSpeakerCharId);
+    if (anchor) {
+      const access = messageCharacterAccess(anchor);
+      for (const id of Object.keys(filteredSchedules)) {
+        if (!canReadCharacterMessage(access, [id])) delete filteredSchedules[id];
+      }
+    }
     const result = checkCharacterExchange(
       chatId,
       lastSpeakerCharId,

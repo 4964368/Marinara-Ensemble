@@ -1,3 +1,8 @@
+import {
+  hasExplicitMessageAudience,
+  hasRestrictedMessageHistory,
+  resolveMessageVisibility,
+} from "../services/generation/message-access.js";
 // ──────────────────────────────────────────────
 // Routes: Chats
 // ──────────────────────────────────────────────
@@ -2470,6 +2475,9 @@ export async function chatsRoutes(app: FastifyInstance) {
     const personaName = identity?.name ?? "User";
 
     const allMessages = await storage.listMessages(req.params.id);
+    if (hasRestrictedMessageHistory(chat.metadata, allMessages)) {
+      return reply.status(409).send({ error: "Shared summaries are unavailable for chats with restricted history" });
+    }
     let startIdx = 0;
     for (let i = allMessages.length - 1; i >= 0; i--) {
       const extra = parseExtra(allMessages[i]!.extra);
@@ -2957,8 +2965,22 @@ export async function chatsRoutes(app: FastifyInstance) {
   });
 
   // Create message
-  app.post<{ Params: { id: string } }>("/:id/messages", async (req) => {
+  app.post<{ Params: { id: string } }>("/:id/messages", async (req, reply) => {
     const input = createMessageSchema.parse({ ...(req.body as Record<string, unknown>), chatId: req.params.id });
+    if (input.messageVisibility && input.messageVisibility.type !== "public") {
+      const chat = await storage.getById(req.params.id);
+      if (!chat) return reply.status(404).send({ error: "Chat not found" });
+      if (chat.mode !== "roleplay" && chat.mode !== "conversation") {
+        return reply
+          .status(400)
+          .send({ error: "Restricted message visibility is available in Roleplay and Conversation" });
+      }
+      try {
+        resolveMessageVisibility(input.messageVisibility, chat);
+      } catch (error) {
+        return reply.status(400).send({ error: (error as Error).message });
+      }
+    }
     const body = req.body as Record<string, unknown>;
     const created = await storage.createMessage(
       input,
@@ -2977,7 +2999,13 @@ export async function chatsRoutes(app: FastifyInstance) {
         return { chat, saved };
       });
       const memory = normalizeAdvancedMemorySettings(parseExtra(chat?.metadata).advancedMemory);
-      if (chat?.mode !== "roleplay" || !memory.enabled || !memory.autoMessageVisibility) return saved;
+      if (
+        chat?.mode !== "roleplay" ||
+        !memory.enabled ||
+        !memory.autoMessageVisibility ||
+        hasRestrictedMessageHistory(chat.metadata, [saved])
+      )
+        return saved;
       // Your message is decided once, when you post it, even if no reply follows (#7349).
       try {
         await createAdvancedMemoryService(app.db).settleMessageVisibility(chat.id);
@@ -3104,7 +3132,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     const active = (app as unknown as { activeGenerations?: Map<string, unknown> }).activeGenerations;
     if (active?.has(chat.id))
       return reply.status(409).send({ error: "Wait for the current generation to finish before making an artifact." });
-    const target = (await storage.listMessages(chat.id)).filter((message) => message.role === "assistant").at(-1);
+    const history = await storage.listMessages(chat.id);
+    const target = history.filter((message) => message.role === "assistant").at(-1);
     if (!target) return reply.status(400).send({ error: "Send a message before making an artifact." });
     const { prompt } = body.data;
     const swipeIndex = target.activeSwipeIndex ?? 0;
@@ -3126,7 +3155,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       ];
     });
     if (!saved) return reply.status(404).send({ error: "Message not found" });
-    const summary = parseExtra(chat.metadata).summary;
+    const summary = hasRestrictedMessageHistory(chat.metadata, history) ? null : parseExtra(chat.metadata).summary;
     const error = await runHtmlArtifactCommand({
       db: app.db,
       messageId: target.id,
@@ -3156,6 +3185,19 @@ export async function chatsRoutes(app: FastifyInstance) {
         const markPatch = normalizeMessageMarkPatch({ ...(req.body as Record<string, unknown>) });
         if ("error" in markPatch) return reply.status(400).send({ error: markPatch.error });
         const partial = markPatch.patch;
+        if (Object.hasOwn(partial, "visibleToCharacterIds")) {
+          return reply.status(400).send({ error: "Message audience is set when the message is sent" });
+        }
+        const visibilityChanged =
+          Object.hasOwn(partial, "hiddenFromAICharacterIds") || Object.hasOwn(partial, "hiddenFromAI");
+        if (visibilityChanged) {
+          const active = (app as unknown as { activeGenerations?: Map<string, unknown> }).activeGenerations;
+          if (active?.has(req.params.chatId)) {
+            return reply
+              .status(409)
+              .send({ error: "Wait for generation to finish before changing message visibility" });
+          }
+        }
         if (partial.pinnedToContext === true && !isMessagePinnedToContext(message.extra)) {
           const chatRows = await storage.listMessages(req.params.chatId);
           if (chatRows.filter((row) => isMessagePinnedToContext(row.extra)).length >= MAX_PINNED_CONTEXT_MESSAGES) {
@@ -3216,7 +3258,21 @@ export async function chatsRoutes(app: FastifyInstance) {
         const contextFlagChanged =
           Object.prototype.hasOwnProperty.call(partial, "isConversationStart") ||
           Object.prototype.hasOwnProperty.call(partial, "conversationStartForCharacterIds");
+        if (
+          partial.hiddenFromAI === true ||
+          (Array.isArray(partial.hiddenFromAICharacterIds) && partial.hiddenFromAICharacterIds.length > 0)
+        ) {
+          await storage.patchMetadata(
+            req.params.chatId,
+            { hasRestrictedMessageHistory: true },
+            {
+              metadataQueueHeld: true,
+              touchUpdatedAt: false,
+            },
+          );
+        }
         const syncSharedExtraAtomically =
+          visibilityChanged ||
           contextFlagChanged ||
           MESSAGE_MARK_EXTRA_KEYS.some((key) => Object.prototype.hasOwnProperty.call(partial, key));
         const updated = syncSharedExtraAtomically
@@ -5551,13 +5607,17 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     const sourceMeta =
       typeof sourceChat.metadata === "string" ? JSON.parse(sourceChat.metadata) : (sourceChat.metadata ?? {});
-    const sourceSummaryEntries = normalizeChatSummaryEntries(sourceMeta.summaryEntries, {
-      legacySummary: typeof sourceMeta.summary === "string" ? sourceMeta.summary : null,
-    });
-    const advancedMemoryTransfer =
-      sourceChat.mode === "roleplay"
-        ? await createAdvancedMemoryService(app.db).exportTransferRecords(sourceChat.id)
-        : [];
+    const msgs = await storage.listMessages(req.params.id);
+    const restrictedSource = hasRestrictedMessageHistory(sourceMeta, msgs);
+    const transfersAdvancedMemory = sourceChat.mode === "roleplay" && !hasExplicitMessageAudience(sourceMeta, msgs);
+    const sourceSummaryEntries = restrictedSource
+      ? []
+      : normalizeChatSummaryEntries(sourceMeta.summaryEntries, {
+          legacySummary: typeof sourceMeta.summary === "string" ? sourceMeta.summary : null,
+        });
+    const advancedMemoryTransfer = transfersAdvancedMemory
+      ? await createAdvancedMemoryService(app.db).exportTransferRecords(sourceChat.id)
+      : [];
     const isSceneChat =
       sourceMeta.sceneStatus === "active" || !!sourceMeta.sceneOriginChatId || !!sourceMeta.scenePackageOrigin;
     if (isSceneChat) {
@@ -5566,7 +5626,6 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     const { upToMessageId } = (req.body ?? {}) as { upToMessageId?: string };
 
-    const msgs = await storage.listMessages(req.params.id);
     if (upToMessageId && !msgs.some((msg) => msg.id === upToMessageId)) {
       return reply.status(404).send({ error: "Cutoff message not found in source chat" });
     }
@@ -5807,6 +5866,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     await storage.raiseWriteOrdinalFloor(newChat.id, sourceChat.writeOrdinalCounter);
     await storage.updateMetadata(newChat.id, {
       ...settingsToKeep,
+      ...(restrictedSource ? { hasRestrictedMessageHistory: true } : {}),
       branchName: "New Branch",
       branchParentChatId: sourceChat.id,
       branchParentMessageId: forkSourceMessage?.id ?? null,
@@ -5832,7 +5892,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     // ensures that branching a branch at an earlier point finds the correct tracker state
     // for that specific message, not just the latest snapshot in the source chat.
     try {
-      if (sourceChat.mode === "roleplay") {
+      if (transfersAdvancedMemory) {
         const copiedMemoryRecordIds = await copyAdvancedMemoryRecords({
           db: app.db,
           chatId: newChat.id,
@@ -6046,6 +6106,10 @@ export async function chatsRoutes(app: FastifyInstance) {
   // saves it into chatMetadata.summary, and returns it.
   // Model resolution: default-for-agents → chat connection.
   app.post<{ Params: { id: string } }>("/:id/generate-summary", async (req, reply) => {
+    const summaryChat = await storage.getById(req.params.id);
+    if (summaryChat && hasRestrictedMessageHistory(summaryChat.metadata, await storage.listMessages(summaryChat.id))) {
+      return reply.status(409).send({ error: "Shared summaries are unavailable for chats with restricted history" });
+    }
     const chat = await storage.getById(req.params.id);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
     const signal = createChatSummaryAbortTracker(reply);

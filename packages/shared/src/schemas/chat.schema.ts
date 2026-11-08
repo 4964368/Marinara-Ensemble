@@ -51,6 +51,14 @@ export function mergeAgentLorebookAttachments(
 
 export const messageRoleSchema = z.enum(["user", "assistant", "system", "narrator"]);
 
+export const messageVisibilitySchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("public") }).strict(),
+  z.object({ type: z.literal("characters"), characterIds: z.array(z.string().trim().min(1)).min(1) }).strict(),
+  z.object({ type: z.literal("present") }).strict(),
+]);
+
+export type MessageVisibilityInput = z.infer<typeof messageVisibilitySchema>;
+
 export const messageReplySchema = z.object({
   messageId: z.string().min(1).max(200),
   name: z.string().min(1).max(200),
@@ -74,11 +82,13 @@ export const createMessageSchema = z.object({
   characterId: z.string().nullable().default(null),
   content: z.string(),
   extra: z.unknown().optional(),
+  messageVisibility: messageVisibilitySchema.optional(),
 });
 
 export const generateRequestSchema = z.object({
   chatId: z.string(),
   userMessage: z.string().nullable().default(null),
+  messageVisibility: messageVisibilitySchema.optional(),
   replyTo: messageReplySchema.optional(),
   submissionId: z.string().min(1).max(100).nullable().optional().default(null),
   regenerateMessageId: z.string().nullable().default(null),
