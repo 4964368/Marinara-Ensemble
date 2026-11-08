@@ -1804,6 +1804,9 @@ export async function chatsRoutes(app: FastifyInstance) {
     const chat = await storage.getById(req.params.id);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
     const incoming = req.body as Record<string, unknown>;
+    if (Object.hasOwn(incoming, "groupAutonomy")) {
+      return reply.status(400).send({ error: "Use the group autonomy controls to change the server scheduler" });
+    }
     let attachmentPatch: Parameters<typeof mergeAgentLorebookAttachments>[1] | undefined;
     if (Object.prototype.hasOwnProperty.call(incoming, "agentLorebookAttachments")) {
       const parsed = agentLorebookAttachmentPatchesSchema.safeParse(incoming.agentLorebookAttachments);

@@ -65,6 +65,38 @@ export const messageReplySchema = z.object({
   content: z.string().min(1).max(16000),
 });
 
+export const groupAutonomyLimitsSchema = z
+  .object({
+    intervalSeconds: z.number().int().min(5).max(3600),
+    maxCalls: z.number().int().min(1).max(100),
+    maxTokens: z.number().int().min(1000).max(1000000),
+  })
+  .strict();
+
+export const DEFAULT_GROUP_AUTONOMY_LIMITS = { intervalSeconds: 30, maxCalls: 12, maxTokens: 60000 };
+
+export const groupAutonomyActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("start"), limits: groupAutonomyLimitsSchema }),
+  z.object({ action: z.literal("pause") }),
+  z.object({ action: z.literal("resume") }),
+  z.object({ action: z.literal("stop") }),
+]);
+
+export const groupAutonomyStateSchema = z.object({
+  id: z.string(),
+  status: z.enum(["running", "paused", "stopped"]),
+  reason: z.enum(["budget", "duplicate", "failure", "unavailable"]).nullable(),
+  limits: groupAutonomyLimitsSchema,
+  callsUsed: z.number().int().nonnegative(),
+  tokensUsed: z.number().int().nonnegative(),
+  lastAttemptAt: z.number().nonnegative(),
+  lastSpeakerId: z.string().nullable(),
+  lastMessageId: z.string().nullable(),
+});
+
+export type GroupAutonomyState = z.infer<typeof groupAutonomyStateSchema>;
+export type GroupAutonomyAction = z.infer<typeof groupAutonomyActionSchema>;
+
 export const createChatSchema = z.object({
   name: z.string().min(1).max(200),
   mode: chatModeSchema,

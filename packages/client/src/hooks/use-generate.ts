@@ -1,3 +1,4 @@
+import type { MessageVisibilityInput } from "@marinara-engine/shared";
 // ──────────────────────────────────────────────
 // React Query: Generation (streaming + agent pipeline)
 // ──────────────────────────────────────────────
@@ -1289,6 +1290,7 @@ export function useGenerate() {
       presetId?: string;
       lorebookIds?: string[];
       userMessage?: string;
+      messageVisibility?: MessageVisibilityInput;
       replyTo?: Message["extra"]["replyTo"];
       regenerateMessageId?: string;
       continueMessageId?: string;

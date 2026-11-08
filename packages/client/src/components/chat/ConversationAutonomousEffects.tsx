@@ -24,8 +24,8 @@ export function ConversationAutonomousEffects({
 }: ConversationAutonomousEffectsProps) {
   const { t: localizeUi } = useUiTranslation();
   const roomOwnsActivity = !!chatMeta.multiplayerSetup || !!chatMeta.multiplayer;
-  const autonomousEnabled = !roomOwnsActivity && !!chatMeta.autonomousMessages;
-  const exchangesEnabled = !roomOwnsActivity && !!chatMeta.characterExchanges;
+  const autonomousEnabled = !roomOwnsActivity && !chatMeta.groupAutonomy && !!chatMeta.autonomousMessages;
+  const exchangesEnabled = !roomOwnsActivity && !chatMeta.groupAutonomy && !!chatMeta.characterExchanges;
   const [notification, setNotification] = useState<{ name: string; id: string } | null>(null);
   const notificationTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 

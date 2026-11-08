@@ -1,3 +1,4 @@
+import { GroupAutonomyControls } from "./GroupAutonomyControls";
 import { ChatButtonLayoutSettings } from "../../features/chat-settings/ChatButtonLayoutSettings";
 // ──────────────────────────────────────────────
 // Chat: Settings Drawer — per-chat configuration
@@ -6996,8 +6997,12 @@ export function ChatSettingsDrawer({
                   )}
                 </div>
 
+                {chatCharIds.length > 1 && !metadata.multiplayer && !metadata.multiplayerSetup && (
+                  <GroupAutonomyControls key={chat.id} chatId={chat.id} individual={groupChatMode === "individual"} />
+                )}
+
                 {/* Character exchanges toggle (group chats only) */}
-                {chatCharIds.length > 1 && (
+                {chatCharIds.length > 1 && !metadata.groupAutonomy && (
                   <SettingsSwitch
                     label={localizeUi("ui.chat.chatsettingsdrawer.characterExchanges")}
                     description={localizeUi("ui.chat.chatsettingsdrawer.charactersChatWithEachOtherInGroupChats")}

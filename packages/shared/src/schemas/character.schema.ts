@@ -89,8 +89,14 @@ export const characterOnboardingSchema = z.object({
   cardVariables: z.array(characterOnboardingVariableSchema).default([]),
 });
 
+export const characterResponseModelSchema = z.object({
+  connectionId: z.string().trim().min(1).max(200),
+  model: z.string().trim().min(1).max(500),
+});
+
 export const characterExtensionsSchema = z
   .object({
+    responseModel: characterResponseModelSchema.nullable().optional(),
     talkativeness: z.number().min(0).max(1).default(0.5),
     fav: z.boolean().default(false),
     world: z.string().default(""),

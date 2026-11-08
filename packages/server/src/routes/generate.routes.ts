@@ -1,3 +1,9 @@
+import {
+  GROUP_AUTONOMY_MAX_OUTPUT,
+  readGroupAutonomy,
+  registerGroupAutonomyRunner,
+  type GroupAutonomyTurn,
+} from "../services/conversation/group-autonomy.service.js";
 import { DISABLED_IMAGE_CAPTIONING } from "../services/generation/image-captioning-runtime.js";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -593,7 +599,13 @@ import { executeKnowledgeRouter } from "../services/agents/knowledge-router.js";
 import { extractFileText, getSourceFilePath } from "./knowledge-sources.routes.js";
 import { gameStateSnapshots as gameStateSnapshotsTable } from "../db/schema/index.js";
 import { and, eq } from "../db/file-query.js";
-import { messageReplySchema, PROFESSOR_MARI_ID, type GenerationParameterSendMap } from "@marinara-engine/shared";
+import {
+  characterResponseModelSchema,
+  isChatProvider,
+  messageReplySchema,
+  PROFESSOR_MARI_ID,
+  type GenerationParameterSendMap,
+} from "@marinara-engine/shared";
 import { chunkAndEmbedMessages } from "../services/memory-recall.js";
 import {
   isMemoryRecallVectorizerAvailable,
@@ -1273,6 +1285,7 @@ export type GenerationRunner = (
   request: SchemaInput<typeof generateRequestSchema>,
   output: GenerationOutput,
   roomContext?: GenerationRoomContext,
+  groupTurn?: GroupAutonomyTurn,
 ) => Promise<unknown>;
 
 export interface GenerateRouteOptions {
@@ -1319,7 +1332,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
    * POST /api/generate
    * Streams AI generation via Server-Sent Events.
    */
-  const executeGeneration: GenerationRunner = async (request, reply) => {
+  const executeGeneration: GenerationRunner = async (request, reply, _roomContext, groupTurn) => {
     const input = generateRequestSchema.parse(request);
     const chatGenerationTimeoutMs = getChatGenerationTimeoutMs();
     const requestDebug = input.debugMode === true;
@@ -1398,6 +1411,9 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
       });
     }
     const earlyMeta = roomGenerationMetadata(parseExtra(chat.metadata));
+    if (input.autonomous && readGroupAutonomy(input.chatId, chat.metadata) && !groupTurn) {
+      return rejectGenerationOutput(reply, 409, { error: "Group exchanges are managed by the server" });
+    }
     // One reading per request: the restored speaker, the identity and the context all follow it (#6959).
     const groupGenerationMode = resolveGroupGenerationMode(requestChatMode, earlyMeta.groupChatMode);
     if (input.messageVisibility && input.messageVisibility.type !== "public") {
@@ -1413,7 +1429,10 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
         });
       }
       try {
-        resolveMessageVisibility(input.messageVisibility, chat);
+        const recipients = resolveMessageVisibility(input.messageVisibility, chat);
+        if (!input.forCharacterId && requestChatMode === "conversation" && recipients?.length === 1) {
+          input.forCharacterId = recipients[0] ?? null;
+        }
       } catch (error) {
         return rejectGenerationOutput(reply, 400, { error: (error as Error).message });
       }
@@ -1448,6 +1467,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
     const shouldAccountAutonomousGeneration =
       requestChatMode === "conversation" &&
       input.autonomous === true &&
+      !groupTurn &&
       earlyMeta.internalAssistant !== PROFESSOR_MARI_INTERNAL_CHAT_MARKER &&
       !input.impersonate &&
       !input.regenerateMessageId;
@@ -1517,9 +1537,11 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
     // window where two requests for the same chat could both pass the guard.
     const abortController = new AbortController();
     const roomSignal = currentRoomGeneration()?.signal;
-    const generationSignal = roomSignal
-      ? AbortSignal.any([abortController.signal, roomSignal])
-      : abortController.signal;
+    const generationSignal = AbortSignal.any([
+      abortController.signal,
+      ...(roomSignal ? [roomSignal] : []),
+      ...(groupTurn ? [groupTurn.signal] : []),
+    ]);
     const agentAbortController = new AbortController();
     const agentSignal = AbortSignal.any([generationSignal, agentAbortController.signal]);
     const generationId = randomUUID();
@@ -1750,6 +1772,67 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
     let runsChatModel = !impersonateConnectionOverride && fallbackConnectionId === chat.connectionId;
     let memoryRecallConnectionId = connId === "random" ? "random" : undefined;
 
+    const resolveGenerationConnection = async (connectionId: string) =>
+      connectionId === LOCAL_SIDECAR_CONNECTION_ID
+        ? createLocalSidecarGenerationConnection()
+        : await connections.getWithKey(connectionId).catch(releaseActiveGenerationAndRethrow);
+
+    // Resolve a character's saved provider and model without the chat's fallback policy.
+    const responseModelRoster = parseJsonField<string[]>(chat.characterIds, []);
+    const responseModels = new Map<
+      string,
+      { name: string; selection: NonNullable<CharacterData["extensions"]["responseModel"]> | null }
+    >();
+    if (
+      !input.impersonate &&
+      (requestChatMode === "conversation" || requestChatMode === "roleplay") &&
+      (responseModelRoster.length === 1 || groupGenerationMode === "individual")
+    ) {
+      await Promise.all(
+        responseModelRoster.map(async (id) => {
+          const row = await chars.getById(id, input.chatId);
+          const card = parseJsonField<Partial<CharacterData>>(row?.data, {});
+          const raw = card.extensions?.responseModel;
+          if (raw == null) return;
+          const parsed = characterResponseModelSchema.safeParse(raw);
+          responseModels.set(id, { name: card.name ?? id, selection: parsed.success ? parsed.data : null });
+        }),
+      ).catch(releaseActiveGenerationAndRethrow);
+    }
+    type ResolvedReplyConnection = NonNullable<Awaited<ReturnType<typeof resolveGenerationConnection>>>;
+    const resolveCharacterReplyConnection = async (id: string): Promise<ResolvedReplyConnection | null> => {
+      const configured = responseModels.get(id);
+      if (!configured) return null;
+      const selected = configured.selection;
+      const saved = selected ? await resolveGenerationConnection(selected.connectionId) : null;
+      if (!selected || !saved || !isChatProvider(saved.provider) || !resolveBaseUrl(saved)) {
+        throw new Error(
+          "Response model unavailable for " + configured.name + (selected ? " (" + selected.model + ")." : "."),
+        );
+      }
+      return selected.model === saved.model
+        ? saved
+        : applyChatModelOverride(saved, {
+            ...selected,
+            maxContext: saved.maxContext ?? undefined,
+          });
+    };
+    const configuredTarget = input.forCharacterId ?? (responseModelRoster.length === 1 ? responseModelRoster[0] : null);
+    let targetReplyConnection: ResolvedReplyConnection | null = null;
+    if (configuredTarget && responseModels.has(configuredTarget)) {
+      try {
+        targetReplyConnection = await resolveCharacterReplyConnection(configuredTarget);
+      } catch (error) {
+        releaseActiveGeneration();
+        return rejectGenerationOutput(reply, 400, { error: (error as Error).message });
+      }
+    }
+    if (targetReplyConnection) {
+      connId = targetReplyConnection.id;
+      runsChatModel = false;
+      memoryRecallConnectionId = undefined;
+    }
+
     // ── Random connection: pick one from the random pool ──
     if (connId === "random") {
       const pool = await connections.listRandomPool().catch(releaseActiveGenerationAndRethrow);
@@ -1761,13 +1844,8 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
       connId = picked.id;
     }
 
-    const resolveGenerationConnection = async (connectionId: string) =>
-      connectionId === LOCAL_SIDECAR_CONNECTION_ID
-        ? createLocalSidecarGenerationConnection()
-        : await connections.getWithKey(connectionId).catch(releaseActiveGenerationAndRethrow);
-
     // A chat without a Model (deleted, or never set) answers through the Main default, with the notice below.
-    let conn = connId ? await resolveGenerationConnection(connId) : null;
+    let conn = targetReplyConnection ?? (connId ? await resolveGenerationConnection(connId) : null);
     let unavailableModelNotice: GenerationFallbackNotice | null = null;
     if (!conn && impersonateConnectionOverride && connId === impersonateConnectionOverride && fallbackConnectionId) {
       logger.warn(
@@ -1802,6 +1880,21 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
       ).catch(releaseActiveGenerationAndRethrow);
       if (conn) connId = conn.id;
     }
+    // A fully configured ensemble does not require a shared chat Model.
+    if (!conn && responseModels.size === responseModelRoster.length && responseModelRoster.length > 0) {
+      for (const id of responseModelRoster) {
+        try {
+          conn = await resolveCharacterReplyConnection(id);
+          if (conn) {
+            connId = conn.id;
+            runsChatModel = false;
+            break;
+          }
+        } catch {
+          // Each responder reports its own unavailable model when selected.
+        }
+      }
+    }
     if (!conn) {
       releaseActiveGeneration();
       return rejectGenerationOutput(
@@ -1830,8 +1923,10 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
         ).catch(releaseActiveGenerationAndRethrow)
       : null;
     const mainFallbackConnection =
-      impersonateFallbackConnection ??
-      (await connections.getFallbackForMain().catch(releaseActiveGenerationAndRethrow));
+      targetReplyConnection || groupTurn
+        ? null
+        : (impersonateFallbackConnection ??
+          (await connections.getFallbackForMain().catch(releaseActiveGenerationAndRethrow)));
     const mainFallbackBaseUrl = mainFallbackConnection ? resolveBaseUrl(mainFallbackConnection) : "";
     let chatMeta = roomGenerationMetadata(parseExtra(chat.metadata));
     const requestTimeZone = normalizePromptTimeZone(input.userTimeZone);
@@ -1866,29 +1961,37 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
       connections,
       ...visionCaptionSettings(await readFeatureModelConnections(app.db).catch(() => null)),
     };
-    const imageCaptioningRuntime: ImageCaptioningRuntime = await resolveImageCaptioningRuntime(imageCaptioningArgs);
+    // Scheduled exchanges spend their budget only on the responding character.
+    // Optional helpers (captioning, embeddings, summaries and translations)
+    // still run on ordinary turns, where the scheduler's budget doesn't apply.
+    const imageCaptioningRuntime: ImageCaptioningRuntime = groupTurn
+      ? DISABLED_IMAGE_CAPTIONING
+      : await resolveImageCaptioningRuntime(imageCaptioningArgs);
     let memoryRecallEmbeddingSource: Awaited<ReturnType<typeof resolveMemoryRecallEmbeddingSource>> | null = null;
-    try {
-      memoryRecallEmbeddingSource = await resolveMemoryRecallEmbeddingSource(app.db, {
-        chatMetadata: chatMeta,
-        connectionId: memoryRecallConnectionId,
-        activeConnection: conn,
-        activeBaseUrl: baseUrl,
-      });
-    } catch (err) {
-      logger.warn(err, "[memory-recall] Embedding source resolution failed; using default embedding path");
-    }
-    let memoryRecallVectorizerAvailable = memoryRecallEmbeddingSource !== null;
-    if (!memoryRecallVectorizerAvailable) {
+    let memoryRecallVectorizerAvailable = false;
+    if (!groupTurn) {
       try {
-        memoryRecallVectorizerAvailable = await isMemoryRecallVectorizerAvailable(app.db, {
+        memoryRecallEmbeddingSource = await resolveMemoryRecallEmbeddingSource(app.db, {
           chatMetadata: chatMeta,
           connectionId: memoryRecallConnectionId,
           activeConnection: conn,
           activeBaseUrl: baseUrl,
         });
       } catch (err) {
-        logger.warn(err, "[memory-recall] Embedding availability check failed; memory recall will stay disabled");
+        logger.warn(err, "[memory-recall] Embedding source resolution failed; using default embedding path");
+      }
+      memoryRecallVectorizerAvailable = memoryRecallEmbeddingSource !== null;
+      if (!memoryRecallVectorizerAvailable) {
+        try {
+          memoryRecallVectorizerAvailable = await isMemoryRecallVectorizerAvailable(app.db, {
+            chatMetadata: chatMeta,
+            connectionId: memoryRecallConnectionId,
+            activeConnection: conn,
+            activeBaseUrl: baseUrl,
+          });
+        } catch (err) {
+          logger.warn(err, "[memory-recall] Embedding availability check failed; memory recall will stay disabled");
+        }
       }
     }
 
@@ -1975,7 +2078,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
 
     const translationMessages = new Map<string, number>();
     const outputTranslationConfig =
-      chatMeta.autoTranslate === true ? getChatTranslationConfig(input.chatId, chatMeta) : null;
+      !groupTurn && chatMeta.autoTranslate === true ? getChatTranslationConfig(input.chatId, chatMeta) : null;
     let translationAfterFailure = false;
     const dispatchAutomaticTranslations = (afterGenerationFailure = false) => {
       // Translation survives a passive disconnect but owns no SSE or generation
@@ -2065,6 +2168,20 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
         normalizeAdvancedMemorySettings(chatMeta.advancedMemory),
       );
       const sourceRows = await chats.listMessages(input.chatId);
+      if (groupTurn) {
+        const anchor = [...sourceRows]
+          .reverse()
+          .find(
+            (row) =>
+              (row.role === "user" || row.role === "assistant") &&
+              isSharedCharacterMessage(row) &&
+              !isMessageHiddenFromAI(row) &&
+              row.content.trim(),
+          );
+        if (anchor?.id !== groupTurn.anchorId || groupTurn.characterId !== input.forCharacterId) {
+          throw new Error("The public conversation changed before the autonomous turn started");
+        }
+      }
       let restrictedHistory = hasRestrictedMessageHistory(chatMeta, sourceRows);
       const connectedRestricted =
         typeof chat.connectedChatId === "string" &&
@@ -2102,13 +2219,15 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
             )
           : -1;
       const lastMessage = allChatMessages.at(-1);
-      const currentInputRow = currentTurnUserMessageId
-        ? allChatMessages.find((message) => message.id === currentTurnUserMessageId)
-        : !input.regenerateMessageId &&
-            !input.continueMessageId &&
-            (input.autonomous ? lastMessage?.role === "assistant" : lastMessage?.role === "user")
-          ? lastMessage
-          : undefined;
+      const currentInputRow = groupTurn
+        ? allChatMessages.find((message) => message.id === groupTurn.anchorId)
+        : currentTurnUserMessageId
+          ? allChatMessages.find((message) => message.id === currentTurnUserMessageId)
+          : !input.regenerateMessageId &&
+              !input.continueMessageId &&
+              (input.autonomous ? lastMessage?.role === "assistant" : lastMessage?.role === "user")
+            ? lastMessage
+            : undefined;
       const currentUserAccess = messageCharacterAccess(currentInputRow ?? {});
       const hasRestrictedCurrentInput = currentUserAccess.visibleToCharacterIds !== undefined;
       const messageById = new Map(allChatMessages.map((message) => [message.id, message]));
@@ -2565,7 +2684,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
             ? input.musicPlayerSource
             : "spotify";
       const chatEnableAgents = shouldEnableAgentsForGeneration({
-        chatEnableAgents: !restrictedHistory && chatMeta.enableAgents === true,
+        chatEnableAgents: !groupTurn && !restrictedHistory && chatMeta.enableAgents === true,
         impersonate: input.impersonate,
         impersonateBlockAgents: input.impersonateBlockAgents,
       });
@@ -3485,7 +3604,10 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
         });
         const identityFallbackPromptTemplateSources: string[] = [];
         const conversationCommandsEnabled =
-          chatMode === "conversation" && !hasRestrictedCurrentInput && chatMeta.characterCommands !== false;
+          chatMode === "conversation" &&
+          !groupTurn &&
+          !hasRestrictedCurrentInput &&
+          chatMeta.characterCommands !== false;
         let temperature: number | undefined = 1;
         let maxTokens = 4096;
         let topP: number | undefined = 1;
@@ -4418,7 +4540,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
           const nowInstant = new Date();
           const conversationSummaryFallback = await connections.getFallbackForAgents();
           const preparedHistory = await prepareConversationPromptHistory({
-            skipSharedSummaries: restrictedHistory,
+            skipSharedSummaries: Boolean(groupTurn) || restrictedHistory,
             finalMessages,
             chatMessages,
             scopedMessages,
@@ -4962,66 +5084,71 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
           lorebookImageNotices.add(code);
           sendSseEvent(reply, { type: "lorebook_image_notice", data: { code } });
         };
-        const providerRuntime = resolveGenerationProviderRuntime({
-          wrapProvider: (provider) =>
-            withImageCaptionFallback(
-              withLorebookImageCompatibility(
-                provider,
-                lorebookReferenceImages,
-                () => notifyLorebookImages("unsupported"),
-                new Set(finalMessages.flatMap((message) => message.images ?? [])),
+        const initialReplyParameters = {
+          temperature,
+          maxTokens,
+          topP,
+          topK,
+          minP,
+          frequencyPenalty,
+          presencePenalty,
+          showThoughts,
+          reasoningEffort,
+          verbosity,
+          serviceTier,
+          assistantPrefill,
+          assistantReasoningPrefill,
+          customThinkingTags,
+          customParameters,
+          enabledParameters,
+          stopSequences,
+          effectiveMaxContext,
+        };
+        const buildReplyProviderRuntime = (
+          selected: ResolvedReplyConnection,
+          selectedPolicy: typeof modelAccessPolicy,
+          strict = false,
+        ) =>
+          resolveGenerationProviderRuntime({
+            wrapProvider: (provider) =>
+              withImageCaptionFallback(
+                withLorebookImageCompatibility(
+                  provider,
+                  lorebookReferenceImages,
+                  () => notifyLorebookImages("unsupported"),
+                  new Set(finalMessages.flatMap((message) => message.images ?? [])),
+                ),
+                () => resolveVisionCaptioningRuntime(imageCaptioningArgs),
+                requestDebug,
               ),
-              () => resolveVisionCaptioningRuntime(imageCaptioningArgs),
-              requestDebug,
-            ),
-          connectionId: connId ?? "",
-          connection: conn,
-          baseUrl,
-          fallbackConnection: mainFallbackConnection,
-          fallbackBaseUrl: mainFallbackBaseUrl,
-          onFallback: (notice) => {
-            mainFallbackNotice = notice;
-            return onFallback(notice);
-          },
-          onProviderUsed: (origin) => {
-            generationProviderOrigin =
-              origin.kind === "fallback"
-                ? { model: origin.model, provider: origin.provider, fallback: mainFallbackNotice }
-                : { model: conn.model, provider: conn.provider };
-          },
-          chatMode,
-          isSceneChat,
-          chatParameters: chatMeta.chatParameters,
-          managedParameterDefinitions,
-          modelAccessPolicy,
-          initial: {
-            temperature,
-            maxTokens,
-            topP,
-            topK,
-            minP,
-            frequencyPenalty,
-            presencePenalty,
-            showThoughts,
-            reasoningEffort,
-            verbosity,
-            serviceTier,
-            assistantPrefill,
-            assistantReasoningPrefill,
-            customThinkingTags,
-            customParameters,
-            enabledParameters,
-            stopSequences,
-            effectiveMaxContext,
-          },
-        });
+            connectionId: selected.id,
+            connection: selected,
+            baseUrl: resolveBaseUrl(selected),
+            fallbackConnection: strict ? null : mainFallbackConnection,
+            fallbackBaseUrl: mainFallbackBaseUrl,
+            onFallback: (notice) => {
+              mainFallbackNotice = notice;
+              return onFallback(notice);
+            },
+            onProviderUsed: (origin) => {
+              generationProviderOrigin =
+                origin.kind === "fallback"
+                  ? { model: origin.model, provider: origin.provider, fallback: mainFallbackNotice }
+                  : { model: selected.model, provider: selected.provider };
+            },
+            chatMode,
+            isSceneChat,
+            chatParameters: chatMeta.chatParameters,
+            managedParameterDefinitions,
+            modelAccessPolicy: selectedPolicy,
+            initial: initialReplyParameters,
+          });
+        const providerRuntime = buildReplyProviderRuntime(conn, modelAccessPolicy, Boolean(targetReplyConnection));
+        const chatReplyConnection = conn;
+        const chatReplyRuntime = providerRuntime;
+        const chatReplyAccessPolicy = modelAccessPolicy;
         const {
           connectionParams,
-          resolvedEffort,
-          providerReasoningEffort,
-          enableThinking,
-          isClaudeNoSampling,
-          providerTopK,
           supportsAssistantReasoningPrefill: providerSupportsAssistantReasoningPrefill,
           primaryProvider: agentChatProvider,
           provider: runtimeProvider,
@@ -8858,7 +8985,9 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
         let maxMainRequestInputTokens: number | null = null;
         // The model's own window, before Advanced Memory narrows it to the cap for the
         // outgoing prompt. Follow-ups are bounded only by this window.
-        const modelMaxContext = effectiveMaxContext;
+        const chatReplyMaxContext = effectiveMaxContext;
+        const chatReplyProvider = provider;
+        const chatReplyPrefill = assistantPrefill;
         /** Generate a single response for a given character and save it. */
         const generateForCharacter = async (
           targetCharId: string | null,
@@ -8895,6 +9024,49 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
             });
             return null;
           }
+          const characterConnection =
+            targetCharId && speaksOnlyTargetCharacter
+              ? targetCharId === configuredTarget
+                ? targetReplyConnection
+                : await resolveCharacterReplyConnection(targetCharId)
+              : null;
+          const conn = characterConnection ?? chatReplyConnection;
+          const modelAccessPolicy = characterConnection
+            ? resolveModelAccessPolicy({ provider: conn.provider, model: conn.model, maxContext: conn.maxContext })
+            : chatReplyAccessPolicy;
+          const providerRuntime =
+            characterConnection && characterConnection !== targetReplyConnection
+              ? buildReplyProviderRuntime(conn, modelAccessPolicy, true)
+              : chatReplyRuntime;
+          const provider = characterConnection ? providerRuntime.provider : chatReplyProvider;
+          const { suppressModelParameters, connectionMaxContext } = modelAccessPolicy;
+          const {
+            temperature,
+            topP,
+            minP,
+            frequencyPenalty,
+            presencePenalty,
+            showThoughts,
+            reasoningEffort,
+            verbosity,
+            serviceTier,
+            assistantReasoningPrefill,
+            customThinkingTags,
+            customParameters,
+            enabledParameters,
+            stopSequences,
+            resolvedEffort,
+            providerReasoningEffort,
+            enableThinking,
+            isClaudeNoSampling,
+            providerTopK,
+          } = providerRuntime;
+          const assistantPrefill = characterConnection ? providerRuntime.assistantPrefill : chatReplyPrefill;
+          let maxTokens = groupTurn
+            ? Math.min(providerRuntime.maxTokens || GROUP_AUTONOMY_MAX_OUTPUT, GROUP_AUTONOMY_MAX_OUTPUT)
+            : providerRuntime.maxTokens;
+          let effectiveMaxContext = providerRuntime.effectiveMaxContext;
+          const modelMaxContext = characterConnection ? effectiveMaxContext : chatReplyMaxContext;
           generationProviderOrigin = { model: conn.model, provider: conn.provider };
           let recoveredAlreadyAppliedSpatialTurn = false;
           const pendingGameStateToolCalls: Parameters<typeof executeToolCalls>[0] = [];
@@ -9224,7 +9396,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
           // Append private raw turns only after taking the shared agent snapshot.
           // Shared summaries, lorebook scans, macros and selectors never receive these turns.
           const privateTurns =
-            input.impersonate || audienceCharacterIds.length === 0
+            input.impersonate || audienceCharacterIds.length === 0 || groupTurn
               ? []
               : privateHistory.filter((message) =>
                   canReadCharacterMessage(messageCharacterAccess(message), audienceCharacterIds),
@@ -9324,7 +9496,8 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
                   roleplayRollParticipants,
                 )
               : toolDefs;
-          const responderToolsAttached = !restrictedHistory && toolsAttached && Boolean(responderToolDefs?.length);
+          const responderToolsAttached =
+            !groupTurn && !restrictedHistory && toolsAttached && Boolean(responderToolDefs?.length);
           if (chatMode === "roleplay") appendLocalEndpointTools(preparedMessagesForGen, responderToolDefs);
           let roleplayPersonalContext = "";
           // [video] is offered only while a clip may be made now: a video connection, and the Video Run Interval passed.
@@ -9707,6 +9880,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
           if (generationSignal.aborted) return null;
           if (
             responderToolsAttached &&
+            !groupTurn &&
             (gameToolPlan || (!gameToolConnection && typeof provider.chatComplete === "function"))
           ) {
             // A game turn rolls a check or two, so it gets a few rounds, never the general limit: a
@@ -9840,6 +10014,20 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
             replyThinking = "";
             rememberMainPromptPreviewForAgents(narratorMessages);
             logPromptSentToModel(narratorMessages);
+            if (groupTurn) {
+              if (suppressModelParameters) {
+                throw new Error("The selected model does not support a server exchange token limit");
+              }
+              narratorMessages = narratorMessages.map(({ role, content }) => ({ role, content }));
+              const outputLimit = Math.min(
+                textChatOptions.maxTokens ?? GROUP_AUTONOMY_MAX_OUTPUT,
+                GROUP_AUTONOMY_MAX_OUTPUT,
+              );
+              const reservedTokens = Buffer.byteLength(JSON.stringify(narratorMessages), "utf8") + outputLimit;
+              if (!(await groupTurn.reserve(reservedTokens)) || generationSignal.aborted) return null;
+              textChatOptions.maxTokens = outputLimit;
+              textChatOptions.enabledParameters = { ...textChatOptions.enabledParameters, maxTokens: true };
+            }
             const gen = provider.chat(narratorMessages, { ...textChatOptions, maxContext: maxContextForSend });
             try {
               let result = await withLlmRequestTimeout(chatGenerationTimeoutMs, () => gen.next());
@@ -11185,6 +11373,19 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
             return null;
           }
 
+          if (groupTurn) {
+            const total =
+              usage?.totalTokens ??
+              (usage?.promptTokens != null && usage?.completionTokens != null
+                ? usage.promptTokens + usage.completionTokens
+                : undefined);
+            if (typeof total === "number" && Number.isSafeInteger(total) && total > 0) groupTurn.usage = total;
+            if (generationSignal.aborted) return null;
+            if (groupTurn.duplicate(fullResponse)) {
+              groupTurn.halt = "duplicate";
+              return null;
+            }
+          }
           // Save assistant message (or user message for impersonate)
           const savedReply = await saveGeneratedReply(
             {
@@ -12209,7 +12410,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
           sendProgress("generating");
           let runningMessages = [...finalMessages];
           const routeCharacterMentions =
-            !input.continueMessageId && (chatMode === "conversation" || chatMode === "roleplay");
+            !groupTurn && !input.continueMessageId && (chatMode === "conversation" || chatMode === "roleplay");
 
           if (generationGuideInstruction) {
             runningMessages.push({ role: "system", content: generationGuideInstruction });
@@ -12316,6 +12517,15 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
             // Keep the established Roleplay instruction placement unchanged.
             const charInstruction = buildRoleplayCharacterInstruction(charName);
             const messagesWithInstruction = [...runningMessages];
+            if (groupTurn) {
+              messagesWithInstruction.push({
+                role: "system",
+                content:
+                  "The player is away. Write only the next message from " +
+                  charName +
+                  ", in their voice and without a speaker label. Respond to another character in the public conversation. Add one new thought or question without writing anyone else's dialogue. Keep it brief.",
+              });
+            }
             // Add as a system message at the end (just before any trailing user message)
             if (charInstruction) {
               messagesWithInstruction.push({ role: "system", content: charInstruction });
@@ -16223,7 +16433,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
       // then intentionally skipped, so resume any pending bot seat before this
       // Conversation stream releases the lock. Human turns and chats without an
       // active game are cheap no-ops inside the shared runner.
-      if (chatMode === "conversation" && !input.impersonate && !generationSignal.aborted) {
+      if (chatMode === "conversation" && !groupTurn && !input.impersonate && !generationSignal.aborted) {
         try {
           await runTurnGameBotTurns({
             db: app.db,
@@ -16318,7 +16528,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
     }
   };
 
-  const runGeneration: GenerationRunner = async (request, output, roomContext) => {
+  const runGeneration: GenerationRunner = async (request, output, roomContext, groupTurn) => {
     const input = generateRequestSchema.parse(request);
     const chat = await chats.getById(input.chatId);
     if (!chat) return rejectGenerationOutput(output, 404, { error: "Chat not found" });
@@ -16333,11 +16543,12 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
     } catch (error) {
       return rejectGenerationOutput(output, 409, { error: (error as Error).message, code: "room_generation_required" });
     }
-    return runWithRoomGeneration(policy, () => executeGeneration(input, output));
+    return runWithRoomGeneration(policy, () => executeGeneration(input, output, roomContext, groupTurn));
   };
 
   app.post("/", async (req, reply) => runGeneration(generateRequestSchema.parse(req.body), reply));
   options.onRunnerReady?.(runGeneration);
+  registerGroupAutonomyRunner(app.db, runGeneration);
 
   // Expose the active generation registry for status/abort routes and other
   // external consumers that read the decorated Fastify property.

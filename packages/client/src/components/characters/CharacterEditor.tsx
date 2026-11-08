@@ -1,3 +1,4 @@
+import { isChatProvider, type APIConnection } from "@marinara-engine/shared";
 import { CardProseSectionHeader as SectionHeader, CardProseTextarea as TextareaTab } from "../cards/CardProse";
 import { useCardEditorDraft } from "../../hooks/use-card-editor-draft";
 import { useCardEditorSave } from "../../hooks/use-card-editor-save";
@@ -85,7 +86,7 @@ import { ONBOARDING_FIELD_COPY } from "./onboarding-field-copy";
 import { CharacterScheduleEditorModal } from "../chat/CharacterScheduleEditorModal";
 import { useUIStore } from "../../stores/ui.store";
 import { lorebookKeys, useLorebook, useUpdateLorebook } from "../../hooks/use-lorebooks";
-import { useConnections } from "../../hooks/use-connections";
+import { useConnectionModels, useConnections } from "../../hooks/use-connections";
 import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
 import { RulesetSheetsSection } from "../rulesets/RulesetSheetsSection";
 import { CharacterCombatIconSection } from "./GameModeIconSection";
@@ -449,12 +450,15 @@ export function CharacterEditor() {
   const createPersona = useCreatePersona();
   const uploadPersonaAvatar = useUploadPersonaAvatar();
   const uploadCharacterSheet = useUploadCharacterGalleryImage(characterId ?? "");
-  const { data: connectionsList } = useConnections();
+  const { data: rawConnections } = useConnections();
+  const connectionsList = rawConnections as APIConnection[] | undefined;
 
   const [activeTab, setActiveTab] = useState<TabId>(
     () => (useUIStore.getState().characterDetailInitialTab as TabId | null) ?? "metadata",
   );
   const [formData, setFormData, formDataRef] = useCardEditorDraft<CharacterData>();
+  const responseModel = formData?.extensions?.responseModel;
+  const { data: responseModels } = useConnectionModels(responseModel?.connectionId);
   // Same rule as the Onboarding tab: only a missing block is empty, so a block
   // the schema can't read blocks saving until the author starts over.
   const storedOnboarding = formData?.extensions?.onboarding;
@@ -1510,6 +1514,54 @@ export function CharacterEditor() {
             />
           </section>
           <section data-editor-section="card">
+            <div className="mb-4 flex flex-wrap gap-3 rounded-md bg-[var(--secondary)] p-3 text-xs">
+              <label className="flex min-w-40 flex-1 flex-col gap-1">
+                {localizeUi("ensemble.model.connection")}
+                <select
+                  className="mari-chrome-field rounded-md p-1.5"
+                  value={responseModel?.connectionId ?? ""}
+                  onChange={(event) => {
+                    const connection = connectionsList?.find((item) => item.id === event.target.value);
+                    updateExtension(
+                      "responseModel",
+                      connection ? { connectionId: connection.id, model: connection.model } : null,
+                    );
+                  }}
+                >
+                  <option value="">{localizeUi("ensemble.model.chatDefault")}</option>
+                  {connectionsList
+                    ?.filter((connection) => isChatProvider(connection.provider))
+                    .map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        {connection.name} ({connection.provider})
+                      </option>
+                    ))}
+                  {responseModel && !connectionsList?.some((item) => item.id === responseModel.connectionId) && (
+                    <option value={responseModel.connectionId}>{localizeUi("ensemble.model.unavailable")}</option>
+                  )}
+                </select>
+              </label>
+              {responseModel && (
+                <label className="flex min-w-40 flex-1 flex-col gap-1">
+                  {localizeUi("ensemble.model.id")}
+                  <input
+                    className="mari-chrome-field rounded-md p-1.5"
+                    list="character-response-models"
+                    maxLength={500}
+                    value={responseModel.model}
+                    onChange={(event) =>
+                      updateExtension("responseModel", { ...responseModel, model: event.target.value })
+                    }
+                  />
+                  <datalist id="character-response-models">
+                    {responseModels?.models.map((model) => (
+                      <option key={model.id} value={model.id} />
+                    ))}
+                  </datalist>
+                </label>
+              )}
+              <p className="w-full text-[var(--muted-foreground)]">{localizeUi("ensemble.model.help")}</p>
+            </div>
             <CharacterCardTab
               formData={formData}
               updateField={updateField}
