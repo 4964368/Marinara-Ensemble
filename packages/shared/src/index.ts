@@ -61,6 +61,7 @@ export * from "./types/chat-insights.js";
 // Schemas
 export * from "./schemas/multiplayer.schema.js";
 export * from "./schemas/chat.schema.js";
+export * from "./schemas/ensemble-world.schema.js";
 export * from "./schemas/chat-preset.schema.js";
 export * from "./schemas/character.schema.js";
 export * from "./schemas/persona.schema.js";

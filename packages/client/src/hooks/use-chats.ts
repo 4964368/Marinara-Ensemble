@@ -1,3 +1,4 @@
+import type { MessageVisibilityInput } from "@marinara-engine/shared";
 // ──────────────────────────────────────────────
 // React Query: Chat hooks
 // ──────────────────────────────────────────────
@@ -1452,6 +1453,7 @@ export function useCreateMessage(chatId: string | null) {
       role: string;
       content: string;
       characterId?: string | null;
+      messageVisibility?: MessageVisibilityInput;
       extra?: Record<string, unknown>;
     }) => api.post<Message>(`/chats/${chatId}/messages`, data),
     onSuccess: (message) => {

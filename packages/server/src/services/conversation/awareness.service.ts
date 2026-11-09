@@ -1,3 +1,4 @@
+import { canReadCharacterMessage, messageCharacterAccess } from "../generation/message-access.js";
 // ──────────────────────────────────────────────
 // Service: Cross-Chat Awareness
 // ──────────────────────────────────────────────
@@ -269,7 +270,13 @@ export async function buildAwarenessBlock(
       .from(messages)
       .where(eq(messages.chatId, chat.id))
       .orderBy(messages.createdAt)) as MessageRow[];
-    const filteredRows = rows.filter((row) => !isMessageHiddenFromAI(row) && isWithinRequestedWindow(row.createdAt));
+    if (!characterIds.every((id) => charIds.includes(id))) continue;
+    const filteredRows = rows.filter(
+      (row) =>
+        !isMessageHiddenFromAI(row) &&
+        canReadCharacterMessage(messageCharacterAccess(row), characterIds) &&
+        isWithinRequestedWindow(row.createdAt),
+    );
 
     if (filteredRows.length > 0) {
       chatMessages.set(chat.id, {

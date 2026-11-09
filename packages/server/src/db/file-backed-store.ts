@@ -461,6 +461,8 @@ const BUILT_IN_FILE_BACKED_TABLES = [
   "message_trash",
   "memory_chunks",
   "advanced_memory_records",
+  "ensemble_worlds",
+  "ensemble_world_events",
   "chat_folders",
   "api_connection_folders",
   "custom_themes",
@@ -546,6 +548,8 @@ const SHARD_KEY_COLUMNS: Record<string, string> = {
   message_trash: "chatId",
   memory_chunks: "chatId",
   advanced_memory_records: "chatId",
+  ensemble_worlds: "chatId",
+  ensemble_world_events: "chatId",
   mari_workspace_context: "chatId",
 };
 // Deliberately mutable, unlike the arrays it mirrors: SHARDED_TABLES aliases
@@ -581,6 +585,8 @@ const LAZY_UNIT_TABLES: ReadonlySet<string> =
         "message_swipes",
         "memory_chunks",
         "advanced_memory_records",
+        "ensemble_worlds",
+        "ensemble_world_events",
         "agent_runs",
         "agent_memory",
         "chat_images",
@@ -858,6 +864,8 @@ export const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; 
     { parent: "chats", child: "chat_images", parentKey: "id", childKey: "chatId" },
     { parent: "chats", child: "memory_chunks", parentKey: "id", childKey: "chatId" },
     { parent: "chats", child: "advanced_memory_records", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "ensemble_worlds", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "ensemble_world_events", parentKey: "id", childKey: "chatId" },
     // #5073: a Mari workspace chat's attached context is scoped to it and must
     // not outlive it (a leaked shard + stale injection into a reused chat id).
     { parent: "chats", child: "mari_workspace_context", parentKey: "id", childKey: "chatId" },

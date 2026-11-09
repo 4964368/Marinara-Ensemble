@@ -1,3 +1,4 @@
+import { useGroupAutonomy } from "../../hooks/use-group-autonomy";
 import { notifyRoleplayTTSParagraph, withRoleplayTTSParagraphs } from "../../lib/roleplay-vn-tts";
 // ──────────────────────────────────────────────
 // Chat: Main chat area — mode-aware rendering
@@ -1195,6 +1196,7 @@ const LocalChatArea = memo(function LocalChatArea({
   // other fields don't renew the array identity. [#3164]
   const chatCharacterIdsRaw = chat?.characterIds;
   const chatCharIds = useMemo(() => getChatCharacterIds({ characterIds: chatCharacterIdsRaw }), [chatCharacterIdsRaw]);
+  useGroupAutonomy(chatMode === "conversation" && chatCharIds.length > 1 ? (chat?.id ?? null) : null);
   const chatPersonaId = chat?.personaId ?? null;
   const { data: chatPersona } = usePersona(chatPersonaId);
 

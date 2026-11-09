@@ -34,7 +34,13 @@ export interface CharacterData {
 }
 
 /** ST-compatible extension fields. */
+export interface CharacterResponseModel {
+  connectionId: string;
+  model: string;
+}
+
 export interface CharacterExtensions {
+  responseModel?: CharacterResponseModel | null;
   /** Chat-specific replacements; the authored base fields remain unchanged. */
   cardFieldAlternatives?: CardFieldAlternative[];
   talkativeness: number;

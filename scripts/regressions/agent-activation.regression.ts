@@ -43,7 +43,7 @@ assert.match(
   /const activatedTextRewriteRunAgents = textRewriteRunAgents\.filter\(\s*\(agent\) => !inactivePostProcessingAgentIds\.has\(agent\.id\),\s*\);/u,
   "Text-rewrite agents must honor the same completed-response activation check",
 );
-const postGenerationStart = generateRouteSource.indexOf("if (hasPostWork &&");
+const postGenerationStart = generateRouteSource.indexOf("hasPostWork &&");
 assert.ok(postGenerationStart >= 0, "The post-generation entrypoint must exist");
 const postGenerationSource = generateRouteSource.slice(
   postGenerationStart,

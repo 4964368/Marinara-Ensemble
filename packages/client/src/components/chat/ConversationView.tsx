@@ -1403,8 +1403,13 @@ export function ConversationView({
                 } as Message)
               : null;
 
+          const messageExtra = typeof msg.extra === "string" ? JSON.parse(msg.extra) : msg.extra;
+          const privateMessage = Boolean(messageExtra && Object.hasOwn(messageExtra, "visibleToCharacterIds"));
           return (
             <Fragment key={item.key}>
+              {privateMessage && (
+                <div className="px-2 text-xs text-[var(--muted-foreground)]">{t("ensemble.visibility.restricted")}</div>
+              )}
               <ConversationMessage
                 key={msg.id}
                 message={displayMsg as any}

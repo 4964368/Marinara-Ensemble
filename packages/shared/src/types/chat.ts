@@ -1108,6 +1108,8 @@ export interface MessageExtra {
   privateNote?: string | null;
   /** Character IDs whose generation context excludes this message. Global hiddenFromAI takes precedence. */
   hiddenFromAICharacterIds?: string[];
+  /** Durable send-time allowlist. An empty list grants access to no characters. */
+  visibleToCharacterIds?: string[];
   /** Advanced Memory hid this message from these characters automatically; decided once per message. */
   autoVisibility?: { decidedAt: string; hiddenCharacterIds: string[] } | null;
   /** The user changed this message's character visibility, so automatic visibility never touches it. */

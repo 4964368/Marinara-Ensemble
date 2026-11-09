@@ -30,7 +30,14 @@ export async function loadLocaleResource(value: unknown): Promise<LoadedLocale |
   if (locale !== DEFAULT_APP_LANGUAGE) {
     // Reads local data only. Downloading a pack is an explicit settings action.
     const resource = await api.get<unknown>(`/ui-languages/${encodeURIComponent(locale)}`);
-    return resource === null ? null : normalizeLocaleResource(locale, resource);
+    if (resource === null) return null;
+    const loaded = normalizeLocaleResource(locale, resource);
+    if (locale === "zh-Hans") {
+      const { default: overlay } = await import("./locales/zh-Hans.json");
+      const { messages } = normalizeLocaleResource(locale, overlay);
+      return { ...loaded, messages: { ...loaded.messages, ...messages } };
+    }
+    return loaded;
   }
   const response = await fetch(await englishAsset());
   if (!response.ok) throw new Error(`Localization file en.json returned HTTP ${response.status}`);

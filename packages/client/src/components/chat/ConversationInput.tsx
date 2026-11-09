@@ -1,3 +1,4 @@
+import type { MessageVisibilityInput } from "@marinara-engine/shared";
 // ──────────────────────────────────────────────
 // Chat: Conversation Input — Discord-style
 // ──────────────────────────────────────────────
@@ -478,6 +479,13 @@ export function ConversationInput({
     () => chatCharacters?.filter((character) => !inactiveCharacterIds.has(character.id)),
     [chatCharacters, inactiveCharacterIds],
   );
+  const [visibility, setVisibility] = useState<{ chatId: string | null; value: string }>();
+  const selectedVisibility = visibility?.chatId === activeChatId ? (visibility?.value ?? "") : "";
+  const messageVisibility = useMemo<MessageVisibilityInput | undefined>(() => {
+    if (!selectedVisibility) return undefined;
+    if (selectedVisibility === "present") return { type: "present" };
+    return { type: "characters", characterIds: [selectedVisibility] };
+  }, [selectedVisibility]);
   const activeCharacterNames = useMemo(
     () => (activeChatCharacters ? activeChatCharacters.map((character) => character.name) : characterNames),
     [activeChatCharacters, characterNames],
@@ -703,11 +711,13 @@ export function ConversationInput({
       content,
       attachments: persistedAttachments,
       submitted,
+      messageVisibility: visibilityForPost,
       scrollToBottom = false,
     }: {
       content: string;
       attachments: PersistedAttachment[];
       submitted: SubmittedConversationInput;
+      messageVisibility?: MessageVisibilityInput;
       scrollToBottom?: boolean;
     }) => {
       let createdMessageId: string | null = null;
@@ -716,6 +726,7 @@ export function ConversationInput({
           role: "user",
           content,
           characterId: null,
+          ...(visibilityForPost ? { messageVisibility: visibilityForPost } : {}),
           ...(submitted.replyTo ? { extra: { replyTo: submitted.replyTo } } : {}),
         });
         createdMessageId = created.id;
@@ -1065,11 +1076,13 @@ export function ConversationInput({
     }
 
     // Slash command check
-    const matched = matchSlashCommand(raw, {
-      mode: "conversation",
-      availableCapabilityIds,
-      conversationGames: conversationGameSlashContributions,
-    });
+    const matched = messageVisibility
+      ? null
+      : matchSlashCommand(raw, {
+          mode: "conversation",
+          availableCapabilityIds,
+          conversationGames: conversationGameSlashContributions,
+        });
     if (matched) {
       if (isConversationHiddenSlashCommand(matched.command)) {
         setFeedback("Impersonate is not available in Conversation mode.");
@@ -1137,7 +1150,7 @@ export function ConversationInput({
     // Downloaded games contribute their own aliases. The message still sends so characters can react.
     {
       const normalized = raw.toLocaleLowerCase();
-      if (/\b(?:play|start|deal|rack)\b/i.test(normalized)) {
+      if (!messageVisibility && /\b(?:play|start|deal|rack)\b/i.test(normalized)) {
         const matchedGame = availableConversationGames.find((game) => {
           const contribution = game.manifest.contributions!.conversationGame!;
           const aliases = [game.manifest.name, contribution.command.slice(1), ...contribution.aliases].map((alias) =>
@@ -1151,9 +1164,11 @@ export function ConversationInput({
       }
     }
 
-    const message = await prepareUserMessage(raw, () =>
-      toast.error(localizeUi("ui.chat.chatinput.failedToTranslateMessageSendingOriginal")),
-    );
+    const message = messageVisibility
+      ? raw
+      : await prepareUserMessage(raw, () =>
+          toast.error(localizeUi("ui.chat.chatinput.failedToTranslateMessageSendingOriginal")),
+        );
 
     const submittedInput: SubmittedConversationInput = {
       chatId: activeChatId,
@@ -1201,6 +1216,7 @@ export function ConversationInput({
         content: message,
         attachments: pendingAttachments,
         submitted: submittedInput,
+        messageVisibility,
         scrollToBottom: true,
       });
       return;
@@ -1211,6 +1227,8 @@ export function ConversationInput({
         chatId: activeChatId,
         connectionId: null,
         userMessage: message,
+        ...(messageVisibility ? { messageVisibility } : {}),
+        ...(messageVisibility?.type === "characters" ? { forCharacterId: messageVisibility.characterIds[0] } : {}),
         ...(replyDraft ? { replyTo: replyDraft } : {}),
         ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}),
         ...(mentioned.length ? { mentionedCharacterNames: mentioned } : {}),
@@ -1225,6 +1243,7 @@ export function ConversationInput({
     replyDraft,
     setReplyDraft,
     availableConversationGames,
+    messageVisibility,
     activeChatCharacters,
     lastMessageRole,
     attachments,
@@ -1375,6 +1394,7 @@ export function ConversationInput({
     if (!hasText && !hasFiles) return;
 
     if (
+      !messageVisibility &&
       shouldExecuteQuickPostAsCommand(raw, {
         mode: "conversation",
         availableCapabilityIds,
@@ -1390,9 +1410,11 @@ export function ConversationInput({
       draftTimerRef.current = null;
     }
 
-    const message = await prepareUserMessage(raw, () =>
-      toast.error(localizeUi("ui.chat.chatinput.failedToTranslateMessagePostingOriginal")),
-    );
+    const message = messageVisibility
+      ? raw
+      : await prepareUserMessage(raw, () =>
+          toast.error(localizeUi("ui.chat.chatinput.failedToTranslateMessagePostingOriginal")),
+        );
     const submittedInput: SubmittedConversationInput = {
       chatId: submittingChatId,
       replyTo: replyDraft,
@@ -1426,9 +1448,11 @@ export function ConversationInput({
       content: message,
       attachments: pendingAttachments,
       submitted: submittedInput,
+      messageVisibility,
     });
   }, [
     activeChatId,
+    messageVisibility,
     replyDraft,
     setReplyDraft,
     isSendBlocked,
@@ -2219,6 +2243,30 @@ export function ConversationInput({
 
       {replyDraft && (
         <MessageReplyPreview reply={replyDraft} onCancel={() => activeChatId && setReplyDraft(activeChatId, null)} />
+      )}
+
+      {(chatCharacters?.length ?? 0) > 1 && !chatMetadata.multiplayer && !chatMetadata.multiplayerSetup && (
+        <label className="mb-1 flex items-center gap-2 text-xs text-[var(--muted-foreground)]">
+          {localizeUi("ensemble.visibility.label")}
+          <select
+            className="mari-chrome-field max-w-52 rounded-md px-2 py-1"
+            value={selectedVisibility}
+            onChange={(event) => setVisibility({ chatId: activeChatId, value: event.target.value })}
+          >
+            <option value="">{localizeUi("ensemble.visibility.public")}</option>
+            <option value="present">{localizeUi("ensemble.visibility.present")}</option>
+            {chatCharacters?.map(({ id, name }) => (
+              <option key={id} value={id}>
+                {localizeUi("ensemble.visibility.only", { name })}
+              </option>
+            ))}
+            {selectedVisibility &&
+              selectedVisibility !== "present" &&
+              !chatCharacters?.some(({ id }) => id === selectedVisibility) && (
+                <option value={selectedVisibility}>{localizeUi("ensemble.visibility.unavailable")}</option>
+              )}
+          </select>
+        </label>
       )}
 
       {/* Input bar */}

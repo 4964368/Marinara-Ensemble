@@ -882,7 +882,7 @@ try {
   // must never flip it — that would arm every registered conversation command on every game turn.
   assert.match(
     generateRoute,
-    /const conversationCommandsEnabled = chatMode === "conversation" && chatMeta\.characterCommands !== false;/,
+    /const conversationCommandsEnabled\s*=\s*chatMode === "conversation" && !hasRestrictedCurrentInput && chatMeta\.characterCommands !== false;/,
     "the conversation-command gate must stay conversation-only",
   );
   assert.match(

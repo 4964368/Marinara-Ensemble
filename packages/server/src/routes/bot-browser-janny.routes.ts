@@ -15,7 +15,6 @@ const JANNY_SEARCH_POLICY: OutboundUrlPolicy = {
 const JANNY_IMAGE_BASE = "https://image.jannyai.com/bot-avatars/";
 const JANNY_SITE_BASE = "https://jannyai.com";
 const JANNY_API_SITE_BASE = "https://api.jannyai.com";
-const JANNY_FALLBACK_TOKEN = "88a6463b66e04fb07ba87ee3db06af337f492ce511d93df6e2d2968cb2ff2b30";
 
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -54,16 +53,12 @@ function jannySearchHeaders(token: string): Record<string, string> {
 }
 
 let cachedToken: string = "";
-// Fresh scraped tokens get a 5-minute TTL; fallback tokens get 1 minute. Both
-// expire so that if Janny rotates the MeiliSearch token (or our scrape was a
-// transient miss), the next request re-scrapes. The client can also force-busts
-// via `GET /janny/token?force=1` after seeing a 401/403 from MeiliSearch.
-let cachedTokenIsFallback = false;
+// The browser can force a refresh after seeing a 401/403 from MeiliSearch.
 let cachedTokenAt = 0;
-const FALLBACK_TOKEN_TTL_MS = 60_000;
 const SCRAPED_TOKEN_TTL_MS = 5 * 60_000;
 const CHARACTER_PAGE_MAX_BYTES = 8 * 1024 * 1024;
-let inFlightTokenFetch: Promise<string> | null = null;
+const JANNY_TOKEN_UNAVAILABLE = "Could not obtain the JannyAI search token from JannyAI. Please try again later.";
+let inFlightTokenFetch: Promise<string | null> | null = null;
 
 async function fetchJannyPage(path: string): Promise<string | null> {
   // Direct fetch first; fall back to corsproxy.io when Cloudflare blocks our IP.
@@ -105,10 +100,10 @@ async function fetchJannyPage(path: string): Promise<string | null> {
   return null;
 }
 
-async function scrapeToken(): Promise<{ token: string; isFallback: boolean }> {
+async function scrapeToken(): Promise<string | null> {
   try {
     const html = await fetchJannyPage("/characters/search");
-    if (!html) return { token: JANNY_FALLBACK_TOKEN, isFallback: true };
+    if (!html) return null;
 
     // Resolve client-config bundle path: either inlined directly in the page,
     // or imported by the SearchPage chunk (Janny's bundler split changed in 2026).
@@ -131,36 +126,30 @@ async function scrapeToken(): Promise<{ token: string; isFallback: boolean }> {
       const cfgJs = await fetchJannyPage(configPath);
       if (cfgJs) {
         const tokenMatch = cfgJs.match(/"([a-f0-9]{64})"/);
-        if (tokenMatch?.[1]) return { token: tokenMatch[1], isFallback: false };
+        if (tokenMatch?.[1]) return tokenMatch[1];
       }
     }
   } catch {
-    // fall through to fallback
+    // An unavailable or unreadable upstream response cannot supply a token.
   }
-  return { token: JANNY_FALLBACK_TOKEN, isFallback: true };
+  return null;
 }
 
-async function getSearchToken(force = false): Promise<string> {
-  // Both fresh and fallback caches get a TTL so a rotated upstream token can't
-  // pin /janny/token to a dead value forever. `force` lets the client trigger
-  // an immediate re-scrape after it sees a 401/403 from MeiliSearch.
-  if (cachedToken && !force) {
-    const ttlMs = cachedTokenIsFallback ? FALLBACK_TOKEN_TTL_MS : SCRAPED_TOKEN_TTL_MS;
-    if (Date.now() - cachedTokenAt < ttlMs) return cachedToken;
-  }
-  if (force || cachedToken) {
-    cachedToken = "";
-    cachedTokenIsFallback = false;
-    cachedTokenAt = 0;
-  }
+async function getSearchToken(force = false): Promise<string | null> {
+  if (!force && cachedToken && Date.now() - cachedTokenAt < SCRAPED_TOKEN_TTL_MS) return cachedToken;
   if (inFlightTokenFetch) return inFlightTokenFetch;
-  inFlightTokenFetch = scrapeToken().then(({ token, isFallback }) => {
-    cachedToken = token;
-    cachedTokenIsFallback = isFallback;
-    cachedTokenAt = Date.now();
-    inFlightTokenFetch = null;
-    return token;
-  });
+  cachedToken = "";
+  inFlightTokenFetch = scrapeToken()
+    .then((token) => {
+      if (token) {
+        cachedToken = token;
+        cachedTokenAt = Date.now();
+      }
+      return token;
+    })
+    .finally(() => {
+      inFlightTokenFetch = null;
+    });
   return inFlightTokenFetch;
 }
 
@@ -224,6 +213,7 @@ export function extractJannyAstroCharacterProps(html: string): string | null {
 async function backfillFromSearch(name: string, charId: string): Promise<JannyMeiliHit | null> {
   if (!name) return null;
   const token = await getSearchToken();
+  if (!token) return null;
   const body = {
     queries: [
       {
@@ -267,9 +257,10 @@ export async function botBrowserJannyRoutes(app: FastifyInstance) {
   // which carries cf_clearance and a real TLS fingerprint. We do the same.)
   // `?force=1` busts the cache and re-scrapes — the client uses this after a
   // 401/403 from MeiliSearch so a rotated upstream token can be recovered.
-  app.get<{ Querystring: { force?: string } }>("/janny/token", async (req) => {
+  app.get<{ Querystring: { force?: string } }>("/janny/token", async (req, reply) => {
     const force = req.query.force === "1" || req.query.force === "true";
     const token = await getSearchToken(force);
+    if (!token) return reply.code(502).send({ error: JANNY_TOKEN_UNAVAILABLE });
     return { token };
   });
 
@@ -286,7 +277,7 @@ export async function botBrowserJannyRoutes(app: FastifyInstance) {
       max_tokens?: string;
       tagIds?: string;
     };
-  }>("/janny/search", async (req) => {
+  }>("/janny/search", async (req, reply) => {
     const {
       q = "",
       page = "1",
@@ -345,6 +336,7 @@ export async function botBrowserJannyRoutes(app: FastifyInstance) {
     };
 
     const token = await getSearchToken();
+    if (!token) return reply.code(502).send({ error: JANNY_TOKEN_UNAVAILABLE });
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);

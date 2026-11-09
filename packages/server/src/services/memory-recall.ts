@@ -6,6 +6,7 @@
 // conversation fragments from specified chats.
 import { eq, desc, and, gt, inArray, isNotNull, isNull, lt } from "../db/file-query.js";
 import type { DB } from "../db/connection.js";
+import { hasRestrictedMessageHistory, readRestrictedChatIds } from "./generation/message-access.js";
 import { chats, messages, memoryChunks } from "../db/schema/index.js";
 import { newId, now } from "../utils/id-generator.js";
 import { localEmbed } from "./local-embedder.js";
@@ -396,11 +397,17 @@ async function chunkAndEmbedMessagesUnlocked(
       characterId: messages.characterId,
       content: messages.content,
       createdAt: messages.createdAt,
+      extra: messages.extra,
     })
     .from(messages)
     .where(eq(messages.chatId, chatId))
     .orderBy(messages.createdAt);
-  const [chat] = await db.select({ mode: chats.mode }).from(chats).where(eq(chats.id, chatId)).limit(1);
+  const [chat] = await db
+    .select({ mode: chats.mode, metadata: chats.metadata })
+    .from(chats)
+    .where(eq(chats.id, chatId))
+    .limit(1);
+  if (hasRestrictedMessageHistory(chat?.metadata, allMessages)) return false;
   if (chat?.mode === "roleplay") {
     for (const message of allMessages) {
       if (message.role === "user") message.content = parseRoleplayUserCommands(message.content).content;
@@ -636,6 +643,7 @@ export async function recallMemories(
 
   if (chunks.length === 0) return [];
   const sourceIds = [...new Set(chunks.map((chunk) => chunk.sourceChatId ?? chunk.chatId))];
+  const restrictedSources = await readRestrictedChatIds(db, [...new Set([...matchingChatIds, ...sourceIds])]);
   const sourceModes = new Map(
     (await db.select({ id: chats.id, mode: chats.mode }).from(chats).where(inArray(chats.id, sourceIds))).map(
       (chat) => [chat.id, chat.mode],
@@ -648,6 +656,7 @@ export async function recallMemories(
   // Score each chunk by cosine similarity
   const scored = chunks
     .map((chunk): RecalledMemory | null => {
+      if (restrictedSources.has(chunk.chatId) || restrictedSources.has(chunk.sourceChatId ?? chunk.chatId)) return null;
       if (chunk.embeddingSpaceId !== embeddingSpaceId) {
         if (!sourceMismatchLogged) {
           sourceMismatchLogged = true;

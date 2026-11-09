@@ -16,13 +16,17 @@ dist/
 *.db-shm
 *.db-wal
 *.db-journal
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 
 # Environment (may contain encryption keys)
 .env
-.env.timeouts.json
-.env.timeouts.json.*.tmp
-.env.local
-.env.production
+.env.*
+!.env.example
+.encryption-key
+.remote-login.json
 
 # Project pnpm config is tracked. The Termux launcher may append local platform
 # fixes to it on Android installs.

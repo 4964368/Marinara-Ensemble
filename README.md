@@ -1,301 +1,158 @@
-# 🍝 Marinara Engine
+# Marinara-Ensemble
 
-<h3><b>Fun. Intuitive. Plug-And-Play.</b></h3>
+Marinara-Ensemble 是 [Marinara Engine](https://github.com/Pasta-Devs/Marinara-Engine) 的独立源码分支，用于和多个 AI 角色共同扮演。每个角色可以使用不同的模型，记住自己经历过的事，并在你离开后继续行动。你也是这个世界里的参与者。
 
-<p>
-  <b>A local, AI-powered chat, roleplay, and game engine</b> built around one idea: <b>you install it, you run it, and it just works. Oh, and don't forget about the part where you have fun! ALSO, HEY, LOOK, IT'S FREE.</b><br/>
-  Created with agentic use in mind, allowing multiple requests at once. Everything is connected. Chat with your characters OOC about your roleplays. Have them create RP scenes for you. All designed with simplicity in mind: we don't want to spend hours on setup, we just want to play.<br/>
-  This is a full-on passion project; it started as a small personal playground, but over time it grew into something enormous. Thank you all for your support.<br/>
-</p>
+本分支基于上游提交 [`fc0333c`](https://github.com/Pasta-Devs/Marinara-Engine/commit/fc0333c3fe978cda5e0b919bd6faec985901704e)，P0、M1 和 M2 修改于 2026 年 11 月完成。Pasta-Devs 不运营或背书此分支。下文所列的上游安装包不包含 Ensemble 的修改。
 
----
+- [从源码启动](#从源码启动)
+- [配置模型并进入演示](#配置模型并进入演示)
+- [Ensemble 新增功能](#ensemble-新增功能)
+- [上游平台安装指南](#上游平台安装指南)
+- [继承的功能](#继承的功能)
+- [上游界面截图](#上游界面截图)
+- [文档](#文档)
+- [社区与致谢](#社区与致谢)
+- [许可证与品牌](#许可证与品牌)
 
-> **⚠️ Beta Software** — Work in progress. Expect rough edges, missing features, and breaking changes. Bug reports and feedback are very welcome!
+## 从源码启动
 
----
+准备 Node.js 24–26，并使用 [package.json](package.json) 中声明的 pnpm 版本。如果已经有本地仓库，从 `git switch` 那一步开始。
 
-> **Fully optional multiplayer:** Private shared sessions require two explicit opt-ins and a trusted client for every participant. See [multiplayer setup and limits](docs/CONFIGURATION.md#optional-multiplayer).
+```sh
+git clone https://github.com/4964368/Marinara-Ensemble.git
+cd Marinara-Ensemble
+git switch feat/ensemble-world
+pnpm install
+pnpm dev
+```
 
-## Table of Contents
+打开终端显示的地址，通常是 [http://localhost:5173](http://localhost:5173)。第一次启动可能需要等待共享包和前端构建。终端运行期间保持窗口打开；按 <kbd>Ctrl</kbd>+<kbd>C</kbd> 停止。
 
-- [🍝 Marinara Engine](#-marinara-engine)
-  - [Table of Contents](#table-of-contents)
-  - [Screenshots](#screenshots)
-  - [Latest Release](#latest-release)
-  - [Installation](#installation)
-  - [Features](#features)
-    - [Chat \& Roleplay](#chat--roleplay)
-    - [Visual \& Immersive](#visual--immersive)
-    - [Appearance \& Themes](#appearance--themes)
-    - [AI Agent System](#ai-agent-system)
-    - [Prompt Engineering](#prompt-engineering)
-    - [Local Customization](#local-customization)
-    - [Connections \& Providers](#connections--providers)
-    - [Export \& Data](#export--data)
-  - [Documentation](#documentation)
-  - [Community \& Support](#community--support)
-  - [Contributors](#contributors)
-  - [License](#license)
-  - [Trademark \& Branding](#trademark--branding)
+要运行本地生产构建，先停止开发服务，再在同一目录执行：
 
----
+```sh
+pnpm build
+pnpm start
+```
 
-## Screenshots
+生产构建默认访问 [http://127.0.0.1:7860](http://127.0.0.1:7860)。本地配置、访问密钥和运行数据不要提交到 Git。端口、数据目录和访问控制见[配置参考](docs/CONFIGURATION.md)。
+
+## 配置模型并进入演示
+
+1. 启动 LM Studio 的本地服务器。在 Marinara 的 **连接** 中添加 OpenAI 兼容连接。填写 LM Studio 显示的地址，通常为 `http://127.0.0.1:1234/v1`。只有模型服务要求认证时，才在应用中填写密钥。
+2. 在角色编辑器中设置 **回复模型连接** 和 **回复模型 ID**，或使用聊天默认模型。角色世界需要在聊天设置中使用 **独立（Individual）** 群聊模式。
+3. 保持应用运行，在另一个终端进入仓库目录，执行 `node scripts/create-ensemble-world-demo.mjs`。如果模型 ID 与演示默认值不同，按 [M2 演示说明](ENSEMBLE-WORLD.md)传入连接 ID 和两个模型 ID。
+4. 打开 **M2 演示 · 翠庭的旧钥匙**，进入 **聊天设置** 的自治消息区域，展开 **角色世界**。在 **服务端角色互动** 中启动。想只和当前场景里的角色说话时，发送前选择 **当前在场角色**。
+
+如果演示已因预算耗尽而暂停，先点 **停止**，再点 **启动** 开始新一轮。普通暂停则可以恢复。事件记录只显示玩家能够见证的内容。
+
+## Ensemble 新增功能
+
+| 阶段 | 功能 |
+| --- | --- |
+| P0：角色可见范围 | 为消息指定接收角色。角色的提示词、历史、摘要、检索和跨聊天回忆遵守保存的受众范围。来源权限无法核实时，受限材料不会进入共享上下文。 |
+| M1：独立模型 | 每个角色可选用自己的连接和模型。独立群聊回复与服务端角色互动会按角色选用模型，可设置调用次数、Token 和间隔限制，并暂停或恢复。 |
+| M2：角色世界 | 在独立群聊中设置场景和目标。角色可移动、观察、等待、交谈、私聊和转述，保留私有记忆、信念和方向性关系。服务端校验行动、保存结果，并显示玩家见证的事件。 |
+
+M2 是开发里程碑。源码构建与 P0、M1、M2 回归测试已通过；M2 专项浏览器流程通过。通用桌面冒烟有两项因继承的能力包目录接口返回 HTTP 500 而失败。当前限制、演示配置和 M3 接口见 [M2 运行说明](ENSEMBLE-WORLD.md)。
+
+多人联机是可选功能。私有共享会话需要两次明确授权，并要求每位参与者使用可信客户端。参见[联机设置与限制](docs/CONFIGURATION.md#optional-multiplayer)。
+
+## 上游平台安装指南
+
+以下指南描述继承自 Marinara Engine 的启动方式与服务。链接中的上游安装包和容器镜像不包含 Ensemble 提交。
+
+| 平台 | 指南 |
+| --- | --- |
+| Docker / Podman | [容器安装](docs/installation/containers.md) |
+| Windows | [Windows 安装](docs/installation/windows.md) |
+| macOS / Linux | [macOS 和 Linux 安装](docs/installation/macos-linux.md) |
+| Android APK | [下载上游 APK](https://github.com/Pasta-Devs/Marinara-Engine/releases/latest/download/marinara-engine-android.apk) · [安装指南](android/README.md) |
+| Android 手动安装 | [Termux 安装指南](docs/installation/android-termux.md) |
+| iOS / iPadOS | [PWA 安装指南](docs/installation/ios-pwa.md) |
+
+本分支的上游版本为 [v2.5.2](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.5.2)。[上游 Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases)提供 Windows 安装包、Android 引导 APK 和版本化源码 ZIP；历史改动见 [CHANGELOG.md](CHANGELOG.md)。Android 引导应用通过 Termux 在同一台设备上启动本地服务器，再用 WebView 或浏览器打开。Android 阻止自动切换时，按 [APK 指南](android/README.md)完成手动步骤。上游安装的升级方式见[升级指南](docs/UPGRADING.md)。
+
+本机回环地址默认可用；普通局域网或公网客户端通常需要登录。在 **设置 → 高级 → 访问** 中配置登录，或按提示使用服务器日志里的一次性设置码。忘记登录时，可在本机运行 `pnpm reset-login`。Tailscale、同主机容器网络、反向代理和隧道的信任边界见[远程访问指南](docs/REMOTE_ACCESS.md)。备份、批量导入、更新和自定义工具变更等操作还受管理员密钥保护，详见[访问控制](docs/CONFIGURATION.md#access-control)。
+
+## 继承的功能
+
+- **聊天与角色扮演：** 三种模式分别用于对话、沉浸式角色扮演和由 AI 主持的游戏。可以创建、导入角色，通过角色卡浏览器查找公开角色卡，管理聊天文件夹与分支，切换备选回复，或从 SillyTavern 导入。
+- **画面与声音：** 支持角色表情和立绘、自定义场景背景、天气、视觉小说视图、聊天图集、短视频、语音和分镜。部分能力来自可下载智能体，例如 Expression Engine、World State、Illustrator 和 Storyboard。
+- **外观与布局：** 支持明暗主题、字体、配色、聊天气泡和窗口布局；也可导入 CSS 主题和角色卡样式。见[外观设置](docs/appearance/appearance-settings.md)与[自定义 CSS 主题](docs/appearance/custom-css-themes.md)。
+- **智能体与小游戏：** 从 [Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) 安装所需的写作、追踪、插画、音乐、记忆和关系智能体。也可和角色玩 UNO、国际象棋、扑克、台球或井字棋。Noodle、Slurp 和 Gacha Forge 等可选应用提供独立入口。见[可下载智能体](docs/agents/built-in-agents.md)与[自定义智能体](docs/agents/custom-agents.md)。
+- **提示词和扩展：** 可以调整预设顺序、设置关键词世界书、查看活动上下文，并使用正则脚本和宏。个人扩展默认停用；审核只适用于指定 SHA-256 指纹的代码。完整页面访问不受同样的沙箱限制，只应为可信代码启用。见[个人扩展](docs/extending/personal-extensions.md)。
+- **模型和媒体服务：** 支持 OpenAI、Anthropic、Gemini、OpenRouter 等服务，以及 LM Studio、Ollama、KoboldCpp 等本地 OpenAI 兼容服务。还有图像、视频、语音与二元决策模型连接。模型可在输入框旁按聊天切换。已保存的 API 密钥以 AES-256 加密存储。见[服务商参考](docs/connections/providers-reference.md)与[决策模型](docs/connections/decision-models.md)。
+- **导出与数据：** 聊天可导出为 JSONL、纯文本、Markdown 或 HTML，也可批量下载 JSONL ZIP。聊天数据保存在本机文件中；使用远程模型时，请求会发送给配置的服务商。
+
+## 上游界面截图
+
+以下图片来自 Marinara Engine，展示本分支继承的界面。
 
 <p align="center">
-  <img src="docs/screenshots/Desktop_Roleplay_View.png" width="90%" alt="Roleplay Chat — Desktop" />
-  <br/>
-  <em>Roleplay Mode — Full-body character sprites, custom backgrounds, live weather effects, and chat widget styles</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/Desktop_Tracker_Panel.png" width="90%" alt="Tracker Panel beside a Roleplay chat" />
-  <br/>
-  <em>Tracker Panel — world state, the cast's moods and stats, quests, and your persona, docked beside the chat</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/Desktop_Main_Menu.png" width="45%" alt="Home" />
-  &nbsp;&nbsp;
-  <img src="docs/screenshots/Desktop_Tutorial.png" width="45%" alt="Onboarding Tutorial" />
-</p>
-<p align="center">
-  <em>Home screen &nbsp;&nbsp;·&nbsp;&nbsp; Guided onboarding</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/Desktop_DM_Conversation.png" width="45%" alt="DM Conversation" />
-  &nbsp;&nbsp;
-  <img src="docs/screenshots/Conversation_Selfie.png" width="45%" alt="Conversation with Selfie" />
-</p>
-<p align="center">
-  <em>Conversation Mode — Discord-style DMs with selfies and image generation</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/Desktop_Noodle_Timeline.png" width="90%" alt="Noodle timeline" />
-  <br/>
-  <em>Noodle — a social feed where your characters post, reply, and share photos</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/Desktop_Model_Picker.png" width="45%" alt="Model picker in the chat input" />
-  &nbsp;&nbsp;
-  <img src="docs/screenshots/Desktop_Chat_Settings_Window.png" width="45%" alt="Chat Settings window" />
-</p>
-<p align="center">
-  <em>Pick and star models right from the chat input &nbsp;&nbsp;·&nbsp;&nbsp; Chat Settings in a movable window</em>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/Desktop_Appearance.png" width="45%" alt="Appearance settings with chat widget styles" />
-  &nbsp;&nbsp;
-  <img src="docs/screenshots/Desktop_Custom_Theme.png" width="45%" alt="Persona 5-inspired custom theme" />
-</p>
-<p align="center">
-  <em>Make it yours — fonts, colors, and chat widget styles &nbsp;&nbsp;·&nbsp;&nbsp; Fully custom theming: a Persona 5-inspired look by Umi, made with custom CSS and pop-out Chat Settings windows</em>
+  <img src="docs/screenshots/Desktop_Roleplay_View.png" width="90%" alt="桌面角色扮演：立绘、场景背景和天气" />
+  <img src="docs/screenshots/Desktop_Tracker_Panel.png" width="90%" alt="角色扮演旁边的世界追踪面板" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/Browser_Game_Screen.png" width="90%" alt="Game Mode — Scene" />
-  <br/>
-  <em>Game Mode — AI Game Master, party of characters, maps, HUD widgets, weather, and time of day</em>
+  <img src="docs/screenshots/Desktop_Main_Menu.png" width="45%" alt="首页" />
+  <img src="docs/screenshots/Desktop_Tutorial.png" width="45%" alt="入门教程" />
+  <img src="docs/screenshots/Desktop_DM_Conversation.png" width="45%" alt="私聊" />
+  <img src="docs/screenshots/Conversation_Selfie.png" width="45%" alt="带角色自拍的对话" />
+  <img src="docs/screenshots/Desktop_Noodle_Timeline.png" width="45%" alt="Noodle 角色动态" />
+  <img src="docs/screenshots/Desktop_Model_Picker.png" width="45%" alt="模型选择器" />
+  <img src="docs/screenshots/Desktop_Chat_Settings_Window.png" width="45%" alt="聊天设置窗口" />
+  <img src="docs/screenshots/Desktop_Appearance.png" width="45%" alt="外观设置" />
+  <img src="docs/screenshots/Desktop_Custom_Theme.png" width="45%" alt="Umi 制作的 Persona 5 风格自定义主题" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/Browser_Game_Dialogue.png" width="45%" alt="Game Dialogue" />
-  &nbsp;&nbsp;
-  <img src="docs/screenshots/Browser_Game_Party_Card.png" width="45%" alt="Party Card" />
-</p>
-<p align="center">
-  <em>Dialogue history with party banter &nbsp;&nbsp;·&nbsp;&nbsp; Party member card with stats, abilities, strengths, and weaknesses</em>
+  <img src="docs/screenshots/Browser_Game_Screen.png" width="90%" alt="游戏场景与 HUD" />
+  <img src="docs/screenshots/Browser_Game_Dialogue.png" width="45%" alt="游戏对话" />
+  <img src="docs/screenshots/Browser_Game_Party_Card.png" width="45%" alt="小队角色卡" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/Mobile_Group_Conversation.png" width="30%" alt="Mobile Group Conversation" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/Mobile_Roleplay_View.png" width="30%" alt="Mobile Roleplay" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/Game_Mobile_Screen.png" width="30%" alt="Mobile Game Mode" />
-</p>
-<p align="center">
-  <em>Fully responsive — Conversations, Roleplay, and Game Mode all work on phones and tablets via PWA</em>
+  <img src="docs/screenshots/Mobile_Group_Conversation.png" width="30%" alt="手机群聊" />
+  <img src="docs/screenshots/Mobile_Roleplay_View.png" width="30%" alt="手机角色扮演" />
+  <img src="docs/screenshots/Game_Mobile_Screen.png" width="30%" alt="手机游戏模式" />
 </p>
 
----
+## 文档
 
-## Latest Release
+从应用首页的 **文档** 可以搜索上游指南。README 已汉化，以下链接中的上游文件继续保留其原有语言。
 
-Current stable release: **[v2.5.2](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.5.2)**.
+| 文档 | 内容 |
+| --- | --- |
+| [安装总览](docs/INSTALLATION.md) · [配置参考](docs/CONFIGURATION.md) · [常见问题](docs/FAQ.md) · [故障排查](docs/TROUBLESHOOTING.md) | 启动、环境变量和常见问题 |
+| [对话模式](docs/conversation/getting-started.md) · [角色扮演](docs/roleplay/getting-started.md) · [游戏模式](docs/game/getting-started.md) · [规则集](docs/game/rulesets.md) | 三种模式和游戏规则 |
+| [角色卡浏览器](docs/characters/bot-browser.md) · [表情和贴纸](docs/conversation/emoji-stickers-gifs.md) · [通话](docs/conversation/calls.md) | 角色导入与聊天工具 |
+| [智能体概览](docs/agents/agents-overview.md) · [智能体目录](docs/agents/built-in-agents.md) · [Noodle](docs/agents/noodle.md) · [知识源](docs/agents/knowledge-sources.md) | 智能体、社交动态和检索 |
+| [生成参数](docs/prompts/generation-parameters.md) · [预设](docs/prompts/presets.md) · [宏](docs/prompts/macros.md) · [正则脚本](docs/extending/regex-scripts.md) · [自定义工具](docs/extending/custom-tools.md) | 提示词和扩展 |
+| [图像](docs/media/image-providers.md) · [ComfyUI](docs/media/comfyui.md) · [风格配置](docs/media/style-profiles.md) · [语音](docs/media/tts-setup.md) · [场景视频](docs/media/scene-video.md) · [分镜](docs/game/storyboard.md) · [LTX 2.3](docs/game/ltx-2-3-storyboards.md) | 媒体连接和工作流 |
+| [远程访问](docs/REMOTE_ACCESS.md) · [Professor Mari](docs/home/professor-mari.md) · [Android](android/README.md) | 安全访问、内置助手和移动端 |
+| [M2 运行与接口](ENSEMBLE-WORLD.md) · [本地化](docs/development/localization.md) · [前端](docs/development/frontend.md) · [架构](docs/development/architecture-map.md) · [贡献指南](CONTRIBUTING.md) · [维护者说明](AGENTS.md) | 开发和维护 |
 
-See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page with a Windows installer, Android bootstrap APK, and named versioned source ZIP. Android APKs are Termux bootstrap + WebView shells: they can download Termux from F-Droid, launch Android's installer, start the Termux setup flow after required permission prompts, then open the local Marinara server on the same device. **[Download the latest Android APK directly](https://github.com/Pasta-Devs/Marinara-Engine/releases/latest/download/marinara-engine-android.apk).**
+## 社区与致谢
 
----
-
-## Installation
-
-| Platform                 | Guide                                                                                                                                           |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🐳 Docker / Podman       | [Container Installation Guide](docs/installation/containers.md) — recommended                                                                   |
-| 🪟 Windows               | [Windows Installation Guide](docs/installation/windows.md)                                                                                      |
-| 🍎🐧 macOS / Linux       | [macOS / Linux Installation Guide](docs/installation/macos-linux.md)                                                                            |
-| 🤖 Android APK Bootstrap | [Download APK](https://github.com/Pasta-Devs/Marinara-Engine/releases/latest/download/marinara-engine-android.apk) · [Guide](android/README.md) |
-| 🤖 Android Manual Termux | [Android (Termux) Installation Guide](docs/installation/android-termux.md) — manual fallback                                                    |
-| 📱 iOS / iPadOS          | [iOS / iPadOS PWA Guide](docs/installation/ios-pwa.md)                                                                                          |
-
-> **Recommended Android path:** tap **Download APK** above, open it, then tap **Install / Start Marinara**. Choose app or browser on its launcher; the APK remembers the choice and signs in automatically. It creates and uses its private localhost credential automatically; users never provide a signing key or local-access secret. Android still shows its required app-install and Termux permission prompts. If Android blocks the automatic handoff, the [Android APK Guide](android/README.md) has the manual fallback.
-
-Each guide covers installation, updating, and LAN access for that platform. See [Configuration Reference](docs/CONFIGURATION.md) for environment variables setup. Having trouble? See [FAQ](docs/FAQ.md) and [Troubleshooting](docs/TROUBLESHOOTING.md).
-
-Upgrading from an older release? See [Upgrading Marinara Engine](docs/UPGRADING.md) for the platform-by-platform upgrade path.
-
-Security defaults are intentionally local-first: loopback access works out of the box, while ordinary LAN and public clients need a login. Set it in **Settings → Advanced → Access** in a signed-in browser, or type the one-time setup code from the server log on the page that blocks another device. `pnpm reset-login` removes a forgotten app login (in Docker: `docker exec <container> node scripts/reset-login.mjs`). See [Remote Access](docs/REMOTE_ACCESS.md#option-1-login-recommended). Direct Tailscale sockets and actual same-host Docker container networks are detected and trusted automatically, Docker only while no app login, Basic Auth, `IP_ALLOWLIST`, or `TRUSTED_AUTH_PROXY` is set. Other traffic follows normal access control, including visitors that a reverse proxy or tunnel on the same machine forwards to loopback. Powerful actions such as backups, bulk import, update apply, sidecar install/download/delete, haptics, and custom tool mutation also require the admin secret: make it in **Settings → Advanced → Admin Access** on the server's own computer, or set `ADMIN_SECRET`; see [Access Control](docs/CONFIGURATION.md#access-control) for all access settings.
-
----
-
-## Features
-
-### Chat & Roleplay
-
-Three chat modes — **Conversation** (Discord-style DMs), **Roleplay** (immersive RPG with sprites and backgrounds), and **Game** (AI Game Master with party, quests, and combat). Characters can share memory across modes. Create or import characters, search the multi-site Card Browser (Chub.ai, JannyAI, Pygmalion, Wyvern, and more), organize chats into folders, branch conversations, swipe between alternate responses, and import from SillyTavern.
-
-### Visual & Immersive
-
-Character sprites for expressions and full-body poses, including animated expressions, custom scene backgrounds, dynamic weather effects, a Visual Novel display for Roleplay, chat galleries with generated illustrations, short scene videos made from your images, text-to-speech voices, and illustrated storyboards for Roleplay and Game Mode. Some of these come from downloadable agents: Expression Engine switches sprites to match each character's mood, World State drives the weather, Illustrator draws scenes, and Storyboard builds the storyboards.
-
-### Appearance & Themes
-
-Make Marinara look the way you want. Most of this lives in **Settings → Appearance**:
-
-- **Colors and style:** dark or light mode, the Marinara (retro Y2K) or SillyTavern-inspired look, background and accent colors (solid or gradient, with optional pulsing or rainbow accents), and a custom cursor.
-- **Fonts and sizes:** pick the app font, add your own font files or download any Google Font, and adjust the display size, chat text size and colors, text outlines, and desktop sidebar width.
-- **Chat widgets:** style the movable chat buttons, windows, and sections with the **Default**, **Dottore**, or **Mari** preset, then change their font, shape, colors (gradients too), and button size. Three switches let your messages and input box match.
-- **Each chat mode:** Conversation rows or bubbles with gradient backgrounds, Roleplay in classic or Visual Novel display with your choice of avatar style, and Game Mode portrait and sprite sizes.
-- **Themes:** write, import, and share custom CSS themes in the **Theme Library**, or give a character card its own look with Card CSS. Professor Mari can make themes for you.
-- **Your layout:** move the chat buttons where you like and, on a computer, resize Chat Settings or pop its sections out into their own windows. Save the arrangement for new chats or in a settings profile.
-
-See [Appearance Settings](docs/appearance/appearance-settings.md) and [Custom CSS Themes](docs/appearance/custom-css-themes.md).
-
-### AI Agent System
-
-Agents are optional AI helpers that work alongside your chats: they track the world, polish the prose, draw pictures, play music, and more. A fresh install comes with none, so Marinara stays light. Open **Agents → Agent Organizer** to install only the ones you want from the official [Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) catalog, then turn them on for each chat in **Chat Settings**. Marinara asks before updating an installed agent, and you can uninstall anything you no longer need. Packages marked as previews are offered only on the Engine `staging` update channel.
-
-- **Writer Agents** shape the story and clean up the prose: Prose Guardian, Continuity Checker, Narrative Director, Knowledge Retrieval, Knowledge Router, and Card Evolution Auditor.
-- **Tracker Agents** keep track of the world, the cast, and your persona: World State, Expression Engine, Quest Tracker, Background, Character Tracker, Persona Stats, Custom Tracker, Inventory Tracker, Beholder, Memory Nag, World Maps, Quartermaster, and Relationship Tracker.
-- **Misc Agents** add pictures, music, memory, and extras: Illustrator, Storyboard, Music DJ, Long-Term Memory, Lorebook Keeper, Echo Chamber, Combat, CYOA Choices, Immersive HTML, Haptic Feedback, Calls (audio and video calls in Conversation mode), and 2D Avatars and 3D Avatars (animated characters that talk and change faces with each reply).
-- **Conversation games** let you play against your characters: UNO, Chess, Poker, 8-Ball Pool, Tic-Tac-Toe, and Rock-Paper-Scissors.
-- **Apps** are whole experiences built on your characters, each with its own Home tab: Noodle (a social feed where your characters post), Slurp (a private creator app for your characters), and Gacha Forge (a gacha game built from a world you describe). Modern Life Sim is a preview.
-- **Custom Agents:** build your own with your own prompt, timing, tools, and output type, or copy an official agent and change it. Importing agents made by other people is off by default: turn on **Allow custom Agent imports** in **Settings → Advanced → Danger Zone**, then review the permissions each one asks for.
-
-See the [Downloadable Agents Reference](docs/agents/built-in-agents.md) and [Creating Custom Agents](docs/agents/custom-agents.md).
-
-### Prompt Engineering
-
-Preset system with drag-and-drop prompt ordering, lorebooks with keyword triggers, an **Active Context** view of the lore each chat is using, regex scripts, and a macro/template system. Professor Mari can draft lorebooks for you.
-
-### Local Customization
-
-Personal Extensions are disabled-by-default drafts authored for you by Professor Mari. Every executable change invalidates approval, and only the exact reviewed SHA-256 fingerprint can run inside Marinara's restricted browser or OS sandbox. Third-party imports stay hidden until the host and user deliberately open both External Extensions safety gates. Legacy tools can request separately disclosed **Full page access** for DOM compatibility, but that mode is deliberately unsandboxed and should be enabled only for exact code you trust. See the [Personal Extensions guide](docs/extending/personal-extensions.md).
-
-### Connections & Providers
-
-- **Chat models:** OpenAI, Anthropic, Google Gemini, Google Vertex AI, OpenRouter, NanoGPT, Mistral, Cohere, xAI / Grok, Arli AI, Z.AI, DeepSeek, and any OpenAI-compatible endpoint, including local servers such as Ollama, LM Studio, and KoboldCpp.
-- **Subscription logins:** use your Claude Pro or Max plan, your ChatGPT account (through Codex), or SuperGrok / X Premium+ (through the Grok CLI) instead of an API key. You sign in once on the computer that runs Marinara.
-- **Built-in Local Model:** a small model Marinara downloads and runs on your own machine for helper jobs such as trackers, lorebook search, and call transcription. No API key needed.
-- **Images:** cloud services such as OpenAI, NovelAI, Stability AI, OpenRouter, and fal.ai, your ChatGPT login, free Pollinations and Stable Horde, and local ComfyUI, SD Web UI, SwarmUI, and Draw Things.
-- **Video:** Google AI Studio (Gemini Omni and Veo), xAI Imagine, OpenRouter, NanoGPT, Atlas Cloud, Seedance 2.0, and local ComfyUI or SwarmUI workflows.
-- **Voice and audio:** text-to-speech through OpenAI-compatible servers, ElevenLabs, PocketTTS, or xAI Voice, plus optional ElevenLabs sound effects and music in Game Mode.
-- **Decision models:** an optional fast model that answers yes-or-no questions about the story, so agents, lorebook entries, and prompt sections switch on only when they should. Use a local model, a hosted TypeSafe or OpenRouter connection, or a server you run.
-
-Change a chat's model right from the **Connections** menu by the chat input: search the list or type a model ID, and star models to add them to **Starred**. A pick there changes only that chat. Each chat can use its own model or pick from **Shuffle**, and API keys are encrypted at rest with AES-256. See [Supported AI Providers](docs/connections/providers-reference.md) and [Decision Models](docs/connections/decision-models.md).
-
-### Export & Data
-
-Export a chat as JSONL, plain text, Markdown, or a styled HTML story, or download several chats at once as a zip of JSONL files. Fully local file-native storage — all data stays on your machine. No account required.
-
----
-
-## Documentation
-
-The full guide library is browsable inside the app: open **Documentation** from the Home screen to search every guide, organized by category. Highlights:
-
-| Document                                                                             | Description                                                                                                        |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| [docs/INSTALLATION.md](docs/INSTALLATION.md)                                         | Installation guide index (all platforms)                                                                           |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md)                                       | Environment variables and `.env` reference                                                                         |
-| [docs/conversation/getting-started.md](docs/conversation/getting-started.md)         | Conversation Mode setup, DMs, groups, profiles (display name, about me, behavior), calls, selfies, and table games |
-| [docs/roleplay/getting-started.md](docs/roleplay/getting-started.md)                 | Roleplay Mode setup, sprites, HUD, agents, and connected chats                                                     |
-| [docs/game/getting-started.md](docs/game/getting-started.md)                         | Game Mode setup, world-gen, party play, storyboards, and troubleshooting                                           |
-| [docs/game/rulesets.md](docs/game/rulesets.md)                                       | Playing Game Mode on a ruleset such as 5e (SRD 5.1): choosing one, checks, sheets, and battles                     |
-| [docs/agents/built-in-agents.md](docs/agents/built-in-agents.md)                     | Modes, behavior, and setup for the downloadable first-party agents and feature packages                            |
-| [docs/agents/noodle.md](docs/agents/noodle.md)                                       | Noodle social timeline: setup, posting, interactions, images, and chat carryover                                   |
-| [docs/prompts/generation-parameters.md](docs/prompts/generation-parameters.md)       | Sampler and output-parameter reference across providers                                                            |
-| [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md)                                       | Remote access, Basic Auth, IP allowlists, and admin access                                                         |
-| [docs/conversation/calls.md](docs/conversation/calls.md)                             | Conversation audio-call setup, Local Whisper, TTS, and troubleshooting                                             |
-| [docs/media/image-providers.md](docs/media/image-providers.md)                       | Image generation provider setup                                                                                    |
-| [docs/media/comfyui.md](docs/media/comfyui.md)                                       | Local and RunPod ComfyUI workflow export, placeholders, reference images, and troubleshooting                      |
-| [docs/media/style-profiles.md](docs/media/style-profiles.md)                         | Image style profiles and prompt grammar                                                                            |
-| [docs/media/tts-setup.md](docs/media/tts-setup.md)                                   | Text to speech (TTS) setup and voices                                                                              |
-| [docs/media/scene-video.md](docs/media/scene-video.md)                               | Scene-video provider setup and the Gallery animation workflow                                                      |
-| [docs/game/storyboard.md](docs/game/storyboard.md)                                   | Storyboard Agent installation, global defaults, and Roleplay and Game Mode workflows                               |
-| [docs/game/ltx-2-3-storyboards.md](docs/game/ltx-2-3-storyboards.md)                 | Krea 2 first frames, local LTX 2.3 ComfyUI animation, and tested Game Mode settings                                |
-| [docs/agents/agents-overview.md](docs/agents/agents-overview.md)                     | Agent system overview: downloading agents, phases, per-chat setup, and custom agents                               |
-| [docs/extending/custom-tools.md](docs/extending/custom-tools.md)                     | Function calling, custom tools, webhooks, scripts, and agent tool enablement                                       |
-| [docs/prompts/presets.md](docs/prompts/presets.md)                                   | Preset editor, prompt sections, groups, ordering, and variables                                                    |
-| [docs/extending/regex-scripts.md](docs/extending/regex-scripts.md)                   | Regex scripts, prompt/display scope, depth, order, and safety                                                      |
-| [docs/agents/knowledge-sources.md](docs/agents/knowledge-sources.md)                 | Knowledge Sources, RAG, Retrieval vs Router, and embedder notes                                                    |
-| [docs/characters/bot-browser.md](docs/characters/bot-browser.md)                     | Multi-site Card Browser search and character import guide                                                          |
-| [docs/conversation/emoji-stickers-gifs.md](docs/conversation/emoji-stickers-gifs.md) | Custom emoji/sticker uploads and selection modes                                                                   |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                                   | Common issues and fixes                                                                                            |
-| [docs/FAQ.md](docs/FAQ.md)                                                           | Frequently asked questions (LAN access, etc.)                                                                      |
-| [docs/prompts/macros.md](docs/prompts/macros.md)                                     | Prompt macro syntax, including weighted random choices                                                             |
-| [docs/home/professor-mari.md](docs/home/professor-mari.md)                           | Built-in assistant capabilities, limits, and safety notes                                                          |
-| [docs/development/localization.md](docs/development/localization.md)                 | Supported UI languages and contribution steps for new or corrected translations                                    |
-| [docs/development/frontend.md](docs/development/frontend.md)                         | Frontend architecture, components, hooks, and API reference                                                        |
-| [docs/development/architecture-map.md](docs/development/architecture-map.md)         | Code ownership map and module-boundary refactor groundwork                                                         |
-| [android/README.md](android/README.md)                                               | Android Termux bootstrap + WebView shell guide                                                                     |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                                                   | Contributor workflow, validation, versioning, and release steps                                                    |
-| [CHANGELOG.md](CHANGELOG.md)                                                         | Release notes                                                                                                      |
-| [AGENTS.md](AGENTS.md)                                                               | Maintainer notes for coding agents                                                                                 |
-
----
-
-## Community & Support
-
-- [**Join our Discord**](https://discord.com/invite/KdAkTg94ME) — Chat, get help, share characters, and give feedback
-- [**Support on Ko-fi**](https://ko-fi.com/marinara_spaghetti) — Help keep the project alive
-
----
-
-## Contributors
+感谢 [Pasta-Devs 和 Marinara Engine 的贡献者](https://github.com/Pasta-Devs/Marinara-Engine/graphs/contributors)提供项目基础。Ensemble 的 P0、M1 和 M2 改动可在 Git 提交历史中追溯。分支相关问题可在 [Marinara-Ensemble Issues](https://github.com/4964368/Marinara-Ensemble/issues)记录；上游社区入口为 [Discord](https://discord.com/invite/KdAkTg94ME) 和 [Ko-fi](https://ko-fi.com/marinara_spaghetti)。
 
 <p align="left">
   <a href="https://github.com/Pasta-Devs/Marinara-Engine/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=Pasta-Devs/Marinara-Engine" alt="Marinara Engine contributors" />
+    <img src="https://contrib.rocks/image?repo=Pasta-Devs/Marinara-Engine" alt="Marinara Engine 上游贡献者" />
   </a>
 </p>
 
-<p align="left">
-  Made with <a href="https://contrib.rocks">contrib.rocks</a>.
-</p>
+贡献者图片由 [contrib.rocks](https://contrib.rocks) 生成。
 
----
+## 许可证与品牌
 
-## License
+Marinara-Ensemble 及其修改的 Marinara Engine 源码使用 [GNU AGPLv3](LICENSE)。上游许可证和版权声明保留。[第三方声明](THIRD_PARTY_NOTICES.md)列出了组件许可、素材条款和未核实事项。
 
-Marinara Engine source code is licensed under the [GNU AGPLv3](LICENSE).
+部分服务商图标来自 LobeHub 的 [Lobe Icons](https://github.com/lobehub/lobe-icons)，使用 [MIT 许可证](packages/client/src/assets/provider-icons/LICENSE)。其他标识的来源和分类见[图标声明](packages/client/src/assets/provider-icons/README.md)。名称和标志仍属于各自权利人。
 
-Provider icons come from [Lobe Icons](https://github.com/lobehub/lobe-icons) by LobeHub ([MIT](packages/client/src/assets/provider-icons/LICENSE)); see [their notice](packages/client/src/assets/provider-icons/README.md) for the marks Marinara drew itself. Product names and logos are trademarks of their owners. Marinara Engine is not affiliated with them.
+源码许可不授予将第三方产品或托管服务描述为 Pasta-Devs 官方、认证或背书的权利。对上游项目的引用应准确；经营托管服务时应标明独立运营者。见[上游商标与品牌政策](TRADEMARKS.md)。
 
-## Trademark & Branding
-
-The software license does not grant permission to imply that a third-party
-product or hosted service is official, endorsed, certified, or supported by
-Pasta-Devs. Ordinary truthful descriptive and nominative references to Marinara
-Engine remain welcome. When a reference is used to market or operate a hosted
-service, its operator and independent status must be clear. See the [Trademark
-and Branding Policy](TRADEMARKS.md) for the complete guidelines.
-
-_olud.ai is an independent third-party service and is not endorsed by Pasta-Devs._
+olud.ai 是独立第三方服务，未获 Pasta-Devs 背书。
 
 [![olud.ai](https://olud.ai/badge.php?tool=pasta-devs-marinara-engine)](https://olud.ai/project/pasta-devs-marinara-engine.html)

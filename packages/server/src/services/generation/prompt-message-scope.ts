@@ -1,4 +1,5 @@
 import { nameToXmlTag, normalizeTextForMatch } from "@marinara-engine/shared";
+import { canReadCharacterMessage } from "./message-access.js";
 import { pruneEmptyPromptWrappers } from "./runtime-agent-sections.js";
 
 export type GenerationPromptMessage = {
@@ -9,6 +10,7 @@ export type GenerationPromptMessage = {
   characterId?: string | null;
   personaSnapshotName?: string | null;
   hiddenFromAICharacterIds?: string[];
+  visibleToCharacterIds?: string[];
   conversationStartForCharacterIds?: string[];
   /** Set on the whisper-only stand-in for a message hidden from the viewer (#7191). */
   whisperSourceId?: string;
@@ -355,8 +357,6 @@ export function filterPromptMessagesForCharacterAudience(
   /** Hidden messages that carry a whisper to the viewer (see roleplayHiddenWhisperMessageIds). */
   whisperMessageIds: ReadonlySet<string> = new Set(),
 ): GenerationPromptMessage[] {
-  if (audienceCharacterIds.length === 0) return messages;
-  const audience = new Set(audienceCharacterIds);
   let characterStartIndex = -1;
   if (audienceCharacterIds.length === 1) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -372,7 +372,7 @@ export function filterPromptMessagesForCharacterAudience(
   }
   const filtered = messages.flatMap((message, index): GenerationPromptMessage[] => {
     if (characterStartIndex > 0 && index < characterStartIndex && message.contextKind === "history") return [];
-    if (!message.hiddenFromAICharacterIds?.some((characterId) => audience.has(characterId))) return [message];
+    if (canReadCharacterMessage(message, audienceCharacterIds)) return [message];
     // Hiding a message from its whisper's recipient hides the narration, not the whisper (#7191).
     // The stand-in has no id, so only appendRoleplayWhispers can attach anything to it.
     if (message.contextKind !== "history" || !message.id || !whisperMessageIds.has(message.id)) return [];

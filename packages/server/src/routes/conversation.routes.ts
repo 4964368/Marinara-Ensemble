@@ -1,3 +1,7 @@
+import { readGroupAutonomy, registerGroupAutonomyRoutes } from "../services/conversation/group-autonomy.service.js";
+import { hasEnsembleWorld } from "../services/conversation/ensemble-world.storage.js";
+import { registerEnsembleWorldRoutes } from "./conversation/ensemble-world.routes.js";
+import { canReadCharacterMessage, messageCharacterAccess } from "../services/generation/message-access.js";
 import { resolveSceneBusyCharacterIds } from "../services/generation/scene-context-runtime.js";
 // ──────────────────────────────────────────────
 // Routes: Conversation Mode Services
@@ -414,6 +418,8 @@ function buildScheduleContinuityContext(args: {
 
 export async function conversationRoutes(app: FastifyInstance) {
   const chats = createChatsStorage(app.db);
+  registerGroupAutonomyRoutes(app, chats);
+  registerEnsembleWorldRoutes(app);
   const chars = createCharactersStorage(app.db);
   const connections = createConnectionsStorage(app.db);
 
@@ -1012,6 +1018,9 @@ export async function conversationRoutes(app: FastifyInstance) {
     }
     const chat = await chats.getById(chatId);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
+    if (readGroupAutonomy(chatId, chat.metadata) || hasEnsembleWorld(chatId, chat.metadata)) {
+      return reply.send({ shouldTrigger: false, characterIds: [], reason: "server_group_autonomy", inactivityMs: 0 });
+    }
 
     const meta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
     const promptTimeZone = resolveConversationTimeZone(meta);
@@ -1285,6 +1294,9 @@ export async function conversationRoutes(app: FastifyInstance) {
     const { chatId, lastSpeakerCharId } = req.body;
     const chat = await chats.getById(chatId);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
+    if (readGroupAutonomy(chatId, chat.metadata) || hasEnsembleWorld(chatId, chat.metadata)) {
+      return reply.send({ shouldTrigger: false, characterIds: [], reason: "server_group_autonomy", inactivityMs: 0 });
+    }
 
     const meta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
     const characterIds: string[] =
@@ -1316,6 +1328,15 @@ export async function conversationRoutes(app: FastifyInstance) {
       messages as Array<{ role: string; createdAt?: string; characterId?: string | null }>,
     );
 
+    const anchor = [...messages]
+      .reverse()
+      .find((message) => message.role === "assistant" && message.characterId === lastSpeakerCharId);
+    if (anchor) {
+      const access = messageCharacterAccess(anchor);
+      for (const id of Object.keys(filteredSchedules)) {
+        if (!canReadCharacterMessage(access, [id])) delete filteredSchedules[id];
+      }
+    }
     const result = checkCharacterExchange(
       chatId,
       lastSpeakerCharId,

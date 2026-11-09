@@ -1,3 +1,5 @@
+import { isSharedCharacterMessage, preserveMessageAclHistory } from "../generation/message-access.js";
+import { preserveEnsembleWorldMarker, resolveWorldMessageVisibility } from "../conversation/ensemble-world.storage.js";
 import { isDeepStrictEqual } from "node:util";
 import { currentRoomGeneration, resolveRoomGenerationPolicy } from "../multiplayer/generation-policy.js";
 // ──────────────────────────────────────────────
@@ -694,6 +696,7 @@ function freshSwipeMessageExtra(value: unknown): Record<string, unknown> {
   for (const key of [
     "hiddenFromAI",
     "hiddenFromAICharacterIds",
+    "visibleToCharacterIds",
     "autoVisibility",
     "visibilityManual",
     "hiddenFromUser",
@@ -1883,10 +1886,22 @@ export function createChatsStorage(db: DB) {
         // A model/agent's old snapshot must never restore an ended room or overwrite its coordinator.
         return this.patchMetadata(id, () => metadata);
       }
-      await db
-        .update(chats)
-        .set({ metadata: JSON.stringify(metadata), updatedAt: now() })
-        .where(eq(chats.id, id));
+      await db.transaction(async (tx) => {
+        const [previous] = await tx.select({ metadata: chats.metadata }).from(chats).where(eq(chats.id, id)).limit(1);
+        await tx
+          .update(chats)
+          .set({
+            metadata: JSON.stringify(
+              preserveEnsembleWorldMarker(
+                id,
+                previous?.metadata,
+                preserveMessageAclHistory(previous?.metadata, metadata),
+              ),
+            ),
+            updatedAt: now(),
+          })
+          .where(eq(chats.id, id));
+      });
       return this.getById(id);
     },
 
@@ -1983,7 +1998,11 @@ export function createChatsStorage(db: DB) {
           room.signal?.throwIfAborted();
           protectRoomMetadata(patch, opts.allowRoomKeys);
         }
-        const merged = mergeMetadataPatch(current, patch);
+        const merged = preserveEnsembleWorldMarker(
+          id,
+          current,
+          preserveMessageAclHistory(current, mergeMetadataPatch(current, patch)),
+        );
         // Explicitly detaching a pinned book resets its chat-local entry state.
         // Temporary exclusions retain it so disabling/re-enabling a book is reversible.
         if (Array.isArray(patch.activeLorebookIds) && Array.isArray(current.activeLorebookIds)) {
@@ -2396,7 +2415,32 @@ export function createChatsStorage(db: DB) {
       const prepare = input.role === "user" ? await userRoleplayPreparer(input.chatId) : null;
       const prepared = prepare?.(input.content, input.extra);
       const content = prepared?.content ?? input.content;
-      const extra = prepared?.extra ?? parseExtraRecord(input.extra);
+      const extra = { ...(prepared?.extra ?? parseExtraRecord(input.extra)) };
+      if (input.messageVisibility) {
+        const chat = await this.getById(input.chatId);
+        if (!chat) throw new Error("Chat not found");
+        const recipients = await resolveWorldMessageVisibility(db, input.messageVisibility, chat);
+        delete extra.visibleToCharacterIds;
+        extra.visibilityManual = true;
+        if (recipients !== undefined) {
+          if (chat.mode !== "roleplay" && chat.mode !== "conversation") {
+            throw new Error("Restricted message visibility is available in Roleplay and Conversation");
+          }
+          extra.visibleToCharacterIds = recipients;
+        }
+      }
+      if (!isSharedCharacterMessage({ extra }) || (extra.hiddenFromAI === true && extra.visibilityManual === true)) {
+        // Set this before writing the message so removing the last restricted source cannot
+        // revive legacy summaries or other derived data with missing provenance.
+        await this.patchMetadata(
+          input.chatId,
+          {
+            chatMessageAclRestrictedHistory: true,
+            ...(Object.hasOwn(extra, "visibleToCharacterIds") ? { chatMessageAclExplicitAudience: true } : {}),
+          },
+          { touchUpdatedAt: false },
+        );
+      }
       const id = newId();
       const resolvedTimestamp = resolveTimestamps(timestampOverrides).createdAt;
       const explicitTimestamp = normalizeTimestampOverrides(timestampOverrides)?.createdAt;
@@ -3606,6 +3650,10 @@ export function createChatsStorage(db: DB) {
 
         // Sync the target swipe's extra onto the message.
         const swipeExtra = parseExtraRecord(target.extra);
+        const currentExtra = parseExtraRecord(msg?.extra);
+        if (Object.hasOwn(currentExtra, "visibleToCharacterIds")) {
+          swipeExtra.visibleToCharacterIds = currentExtra.visibleToCharacterIds;
+        }
         await db
           .update(messages)
           .set({

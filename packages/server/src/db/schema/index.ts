@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 export * from "./chats.js";
 export * from "./advanced-memory.js";
+export * from "./ensemble-world.js";
 export * from "./conversation-calls.js";
 export * from "./chat-presets.js";
 export * from "./characters.js";

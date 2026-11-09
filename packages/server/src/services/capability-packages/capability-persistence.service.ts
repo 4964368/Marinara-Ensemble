@@ -1,3 +1,8 @@
+import {
+  isSharedCharacterMessage,
+  preserveMessageAclHistory,
+  readRestrictedChatIds,
+} from "../generation/message-access.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   type CapabilityAdvancedMemorySummary,
@@ -590,12 +595,20 @@ function createPersistenceSession(db: DB, assertPermission: PersistencePermissio
   return {
     async listChats() {
       assertPermission("chat-read");
-      return (await db.select().from(chats).orderBy(desc(chats.updatedAt))).map(mapChat);
+      const rows = await db.select().from(chats).orderBy(desc(chats.updatedAt));
+      const restricted = await readRestrictedChatIds(
+        db,
+        rows.map((row) => row.id),
+      );
+      return rows.map((row) => mapChat(restricted.has(row.id) ? { ...row, metadata: "{}" } : row));
     },
     async getChat(chatId) {
       assertPermission("chat-read");
       const rows = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
-      return rows[0] ? mapChat(rows[0]) : null;
+      const row = rows[0];
+      if (!row) return null;
+      const restricted = (await readRestrictedChatIds(db, [chatId])).has(chatId);
+      return mapChat(restricted ? { ...row, metadata: "{}" } : row);
     },
     async listMessages(chatId) {
       assertPermission("chat-read");
@@ -605,14 +618,26 @@ function createPersistenceSession(db: DB, assertPermission: PersistencePermissio
         .where(eq(messages.chatId, chatId))
         .orderBy(messages.createdAt, messages.id);
       // A failed name lookup costs the agent view, never the messages.
-      const names = await agentWhisperNames(db, chatId).catch((err) => {
-        logger.warn(err, "Agent whisper names unavailable for chat %s; listing messages without agentContent", chatId);
-        return null;
-      });
-      return rows.map((row) => mapMessage(row, names));
+      const restricted = (await readRestrictedChatIds(db, [chatId])).has(chatId);
+      const names = restricted
+        ? null
+        : await agentWhisperNames(db, chatId).catch((err) => {
+            logger.warn(
+              err,
+              "Agent whisper names unavailable for chat %s; listing messages without agentContent",
+              chatId,
+            );
+            return null;
+          });
+      return rows
+        .filter((row) => isSharedCharacterMessage(row) && parseExtra(row.extra).hiddenFromAI !== true)
+        .map((row) => mapMessage(restricted ? { ...row, extra: "{}" } : row, names));
     },
     async listChatSummaries(chatId) {
       assertPermission("chat-read");
+      if ((await readRestrictedChatIds(db, [chatId])).has(chatId)) {
+        return { ...mapChatSummaries(undefined), advancedMemory: [] };
+      }
       const rows = await db
         .select({ metadata: chats.metadata, updatedAt: chats.updatedAt })
         .from(chats)
@@ -634,6 +659,7 @@ function createPersistenceSession(db: DB, assertPermission: PersistencePermissio
     },
     async getGameState(chatId) {
       assertPermission("chat-read");
+      if ((await readRestrictedChatIds(db, [chatId])).has(chatId)) return null;
       const rows = await db
         .select()
         .from(gameStateSnapshots)
@@ -756,7 +782,9 @@ function createPersistenceSession(db: DB, assertPermission: PersistencePermissio
             .set({
               lastMessageAt: input.lastMessageAt,
               updatedAt: input.updatedAt,
-              ...(input.metadata ? { metadata: JSON.stringify(input.metadata) } : {}),
+              ...(input.metadata
+                ? { metadata: JSON.stringify(preserveMessageAclHistory(rows[0]?.metadata, input.metadata)) }
+                : {}),
             })
             .where(eq(chats.id, input.chatId)),
         );
@@ -774,7 +802,7 @@ function createPersistenceSession(db: DB, assertPermission: PersistencePermissio
           transaction
             .update(chats)
             .set({
-              metadata: JSON.stringify(input.metadata),
+              metadata: JSON.stringify(preserveMessageAclHistory(rows[0]?.metadata, input.metadata)),
               updatedAt: input.updatedAt,
             })
             .where(eq(chats.id, input.chatId)),

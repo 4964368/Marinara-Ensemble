@@ -1,3 +1,8 @@
+import {
+  canReadCharacterMessage,
+  isSharedCharacterMessage,
+  messageCharacterAccess,
+} from "../../services/generation/message-access.js";
 import { partialInput } from "@marinara-engine/shared";
 import { isDeepStrictEqual } from "node:util";
 import type { ChatMessage } from "../../services/llm/base-provider.js";
@@ -824,7 +829,7 @@ export function isMessageHiddenFromAIForCharacter(
   characterId: string | null | undefined,
 ): boolean {
   if (isMessageHiddenFromAI(message)) return true;
-  return typeof characterId === "string" && getMessageHiddenFromAICharacterIds(message).includes(characterId);
+  return !canReadCharacterMessage(messageCharacterAccess(message), characterId ? [characterId] : []);
 }
 
 export function isRoleplaySummaryMode(chatMode: string): boolean {
@@ -1000,7 +1005,9 @@ export function selectSummaryRangeMessages<T extends { id: string; extra?: unkno
   if (to - from + 1 > 500) {
     return { error: "Summary ranges cannot include more than 500 messages", code: "tooLarge" };
   }
-  const messages = allMessages.slice(from, to + 1).filter((message) => !isMessageHiddenFromAI(message));
+  const messages = allMessages
+    .slice(from, to + 1)
+    .filter((message) => isSharedCharacterMessage(message) && !isMessageHiddenFromAI(message));
   if (messages.length === 0) {
     return { error: "No non-hidden messages available for the requested summary range", code: "hidden" };
   }
@@ -1033,7 +1040,7 @@ export function selectRollingSummaryMessages<T extends { id: string; extra?: unk
   const { messages, contextSize } = args;
   const size = Number.isFinite(contextSize) ? Math.max(0, Math.floor(contextSize)) : 0;
   if (size <= 0) return [];
-  const visible = messages.filter((message) => !isMessageHiddenFromAI(message));
+  const visible = messages.filter((message) => isSharedCharacterMessage(message) && !isMessageHiddenFromAI(message));
   // Fewer visible messages than the window — nothing can have drifted out of it.
   if (visible.length <= size) return visible;
   // Ids owned by a live (enabled) summary entry — what it summarized. A manual "Hide from

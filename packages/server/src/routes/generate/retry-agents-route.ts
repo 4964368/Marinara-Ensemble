@@ -1,3 +1,8 @@
+import {
+  hasExplicitMessageAudience,
+  hasRestrictedMessageHistory,
+  isSharedCharacterMessage,
+} from "../../services/generation/message-access.js";
 import { allowsDefaultChatModel } from "../../services/llm/local-context-limit.js";
 import { applyChatModelOverride, readChatModelOverride } from "../../services/generation/connection-resolution.js";
 import type { FastifyInstance } from "fastify";
@@ -4967,6 +4972,18 @@ export async function registerRetryAgentsRoute(
           : null;
       const requireAgentWriteApproval = agentWriteApprovalRequired(chatMeta);
       const allMessages = await runRetrySetupPhase(abortController.signal, () => chats.listMessages(chatId));
+      if (
+        hasExplicitMessageAudience(chatMeta, allMessages) ||
+        allMessages.some((message) => !isSharedCharacterMessage(message))
+      ) {
+        throw new Error("Shared agents are unavailable for chats with restricted character audiences");
+      }
+      if (hasRestrictedMessageHistory(chatMeta, allMessages)) {
+        delete chatMeta.summary;
+        delete chatMeta.summaryEntries;
+        delete chatMeta.daySummaries;
+        delete chatMeta.weekSummaries;
+      }
       let startIdx = 0;
       for (let index = allMessages.length - 1; index >= 0; index--) {
         const extra = parseExtra(allMessages[index]!.extra);
