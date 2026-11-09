@@ -205,7 +205,7 @@ export const messageRef = (message: Message): EvidenceRef => ({
   fingerprint: createHash("sha256").update(message.content).digest("hex"),
 });
 
-export function actorCanReadMessage(message: Message, actorId: string): boolean {
+export function actorCanReadMessage(message: Pick<Message, "role" | "extra" | "content">, actorId: string): boolean {
   const extra = parseExtra(message.extra);
   return (
     (message.role === "user" || message.role === "assistant") &&

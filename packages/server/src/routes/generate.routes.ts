@@ -1942,7 +1942,7 @@ export async function generateRoutes(app: FastifyInstance, options: GenerateRout
           db: app.db,
           chat,
           cards,
-          playerName: player?.name,
+          player: player ? { name: player.name, aboutMe: player.aboutMe } : undefined,
           turn: groupTurn,
           conn,
           baseUrl,
