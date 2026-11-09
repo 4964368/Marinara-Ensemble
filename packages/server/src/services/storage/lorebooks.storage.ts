@@ -28,6 +28,7 @@ import {
   type LorebookBulkEditResult,
   planLorebookBulkKeyPatches,
   type CreateLorebookFolderInput,
+  type Lorebook,
   type LorebookEntry,
   type SourceMessageRef,
   type UpdateLorebookFolderInput,
@@ -145,6 +146,16 @@ type LinkedLorebook = {
 
 function activeLorebookMatchesFilters(book: LinkedLorebook, filters: LorebookScopeFilters): boolean {
   return filters.activeLorebookIds?.includes(book.id) === true;
+}
+
+export function lorebookMatchesActorScope(
+  book: Partial<Pick<Lorebook, "characterIds" | "characterId" | "personaIds" | "personaId" | "chatId">>,
+  actorId: string,
+  chatId?: string,
+): boolean {
+  if (book.personaId || book.personaIds?.length || (book.chatId && book.chatId !== chatId)) return false;
+  const owners = resolveLinkIds(book.characterIds, book.characterId);
+  return owners.length === 0 || owners.includes(actorId);
 }
 
 /** Parse DB row booleans ("true"/"false") → real booleans and JSON strings → objects. */
@@ -813,6 +824,7 @@ export function createLorebooksStorage(db: DB) {
       chatId?: string;
       excludedLorebookIds?: string[];
       excludedSourceAgentIds?: string[];
+      isolatedActorId?: string;
     }) {
       const room = currentRoomGeneration();
       if (room && (room.signal?.aborted || filters?.chatId !== room.chatId)) return [];
@@ -841,6 +853,8 @@ export function createLorebooksStorage(db: DB) {
         relevantBooks = relevantBooks.filter((b) => {
           if (excludedLorebookIds.has(b.id)) return false;
           if (b.sourceAgentId && excludedSourceAgentIds.has(b.sourceAgentId)) return false;
+          if (filters.isolatedActorId && !lorebookMatchesActorScope(b, filters.isolatedActorId, filters.chatId))
+            return false;
           // Globally active lorebooks bypass all scope filters
           if (b.isGlobal) return true;
           // Explicitly added to this chat.

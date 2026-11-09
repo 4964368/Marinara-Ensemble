@@ -19,7 +19,7 @@ import type {
 } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
-import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
+import { createLorebooksStorage, lorebookMatchesActorScope } from "../storage/lorebooks.storage.js";
 import { resolveLorebookScopeExclusions } from "./game-lorebook-scope.js";
 import {
   recursiveScan,
@@ -1234,6 +1234,11 @@ export async function processLorebooks(
     entryTimingStates?: Record<string, LorebookEntryTimingState>;
     /** Preview/debug scan: read timing state but do not return mutable timing updates. */
     previewOnly?: boolean;
+    /** A read-only scan of one actor's knowledge, with no shared activation history or library includes. */
+    isolatedActor?: {
+      id: string;
+      canReadSource: (message: Pick<typeof messagesTable.$inferSelect, "role" | "content" | "extra">) => boolean;
+    };
     /** Generation trigger labels used by per-entry include/exclude filters. */
     generationTriggers?: string[];
     /** Resolves prompt macros for final included lorebook entries. May apply macro side effects. */
@@ -1250,6 +1255,9 @@ export async function processLorebooks(
   },
 ): Promise<LorebookScanResult> {
   const storage = createLorebooksStorage(db);
+  const isolatedActor = options?.isolatedActor;
+  const characterIds = isolatedActor ? [isolatedActor.id] : options?.characterIds;
+  const personaId = isolatedActor ? null : options?.personaId;
 
   // Build filters for scoped lorebook selection.
   // When the caller provides options (even with empty arrays), scope to matching
@@ -1258,11 +1266,12 @@ export async function processLorebooks(
   const filters = options
     ? {
         chatId: options.chatId,
-        characterIds: options.characterIds,
-        personaId: options.personaId,
+        characterIds,
+        personaId,
         activeLorebookIds: options.activeLorebookIds,
         excludedLorebookIds: options.excludedLorebookIds,
         excludedSourceAgentIds: options.excludedSourceAgentIds,
+        isolatedActorId: isolatedActor?.id,
       }
     : undefined;
 
@@ -1270,16 +1279,20 @@ export async function processLorebooks(
   // scope-based book filter is skipped outright rather than narrowed. Narrowing it
   // would not close the hole: filterRelevantLorebooks admits every global book
   // BEFORE it consults activeLorebookIds, so an empty list is not a refusal.
-  const forcedEntriesOnly = options?.forcedEntriesOnly === true;
+  const forcedEntriesOnly = !isolatedActor && options?.forcedEntriesOnly === true;
   const allLorebooks = (await storage.list()) as unknown as Lorebook[];
-  const forcedIds = uniqueStrings(options?.forcedEntryIds ?? []);
+  const forcedIds = isolatedActor ? [] : uniqueStrings(options?.forcedEntryIds ?? []);
   const requestedForcedEntryIds = forcedEntriesOnly ? forcedIds : forcedIds.slice(0, LIMITS.MAX_LOREBOOK_ENTRIES);
   let forcedEntries = (await storage.listEligibleEntriesByIds(requestedForcedEntryIds, {
     unlimited: forcedEntriesOnly,
     excludedLorebookIds: options?.excludedLorebookIds,
     excludedSourceAgentIds: options?.excludedSourceAgentIds,
   })) as unknown as LorebookEntry[];
-  const relevantLorebooks = forcedEntriesOnly ? [] : filterRelevantLorebooks(allLorebooks, filters);
+  const relevantLorebooks = forcedEntriesOnly
+    ? []
+    : filterRelevantLorebooks(allLorebooks, filters).filter(
+        (book) => !isolatedActor || lorebookMatchesActorScope(book, isolatedActor.id, options?.chatId),
+      );
   const forcedLorebookIds = new Set(forcedEntries.map((entry) => entry.lorebookId));
   const effectiveLorebooks = Array.from(
     new Map(
@@ -1307,6 +1320,17 @@ export async function processLorebooks(
     Array.from(new Map([...normallyActiveEntries, ...forcedEntries].map((entry) => [entry.id, entry])).values()),
     relevantLorebooksById,
   );
+  if (isolatedActor) {
+    // Old agent-authored entries without source refs cannot establish whose knowledge they contain.
+    const agentBookIds = new Set(
+      allLorebooks.filter((book) => book.sourceAgentId || book.generatedBy === "agent").map(({ id }) => id),
+    );
+    allEntries = allEntries.filter(
+      (entry) =>
+        relevantLorebooksById.has(entry.lorebookId) &&
+        (entry.sourceMessageRefs?.length || (!entry.sourceAgentId && !agentBookIds.has(entry.lorebookId))),
+    );
+  }
 
   // Lazy staleness for agent-authored entries (deleted-turn lore must not keep
   // steering generations). The storage cascade handles message DELETION; this
@@ -1325,14 +1349,15 @@ export async function processLorebooks(
     const refIds = Array.from(
       new Set(allEntries.flatMap((entry) => (entry.sourceMessageRefs ?? []).map((ref) => ref.id))),
     );
-    const swipeByMessageId = new Map(
-      (
-        await db
+    const sources = isolatedActor
+      ? (await db.select().from(messagesTable).where(inArray(messagesTable.id, refIds))).filter(
+          (row) => row.chatId === options?.chatId && isolatedActor.canReadSource(row),
+        )
+      : await db
           .select({ id: messagesTable.id, activeSwipeIndex: messagesTable.activeSwipeIndex })
           .from(messagesTable)
-          .where(inArray(messagesTable.id, refIds))
-      ).map((row) => [row.id, row.activeSwipeIndex ?? 0]),
-    );
+          .where(inArray(messagesTable.id, refIds));
+    const swipeByMessageId = new Map(sources.map((row) => [row.id, row.activeSwipeIndex ?? 0]));
     allEntries = allEntries.filter((entry) => {
       if (!Array.isArray(entry.sourceMessageRefs) || entry.sourceMessageRefs.length === 0) return true;
       return entry.sourceMessageRefs.every((ref) => {
@@ -1371,7 +1396,8 @@ export async function processLorebooks(
   // `{{include::...}}` in an entry (#6912): the short form looks in the entry's own
   // lorebook, and an entry never includes itself. Done before the scan, so recursion,
   // budgets and macros all see the included text.
-  if (allEntries.some((entry) => usesLorebookIncludes(entry.content))) {
+  // Library-wide includes can bypass character, entry, and source-message gates.
+  if (!isolatedActor && allEntries.some((entry) => usesLorebookIncludes(entry.content))) {
     try {
       // ponytail: reads every lorebook once per scan, and only when an entry uses include. If chats
       // with includes get slow, load this once per request and pass it in through the scan options.
@@ -1391,7 +1417,7 @@ export async function processLorebooks(
   const activeEntriesById = new Map(allEntries.map((entry) => [entry.id, entry]));
   forcedEntries = forcedEntries.flatMap((entry) => activeEntriesById.get(entry.id) ?? []);
 
-  const previewOnly = options?.previewOnly === true;
+  const previewOnly = !!isolatedActor || options?.previewOnly === true;
 
   if (allEntries.length === 0) {
     return {
@@ -1423,12 +1449,12 @@ export async function processLorebooks(
   }
 
   const tokenBudget = forcedEntriesOnly ? 0 : (options?.tokenBudget ?? LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET);
-  const timingStates = toTimingStateMap(options?.entryTimingStates);
+  const timingStates = toTimingStateMap(isolatedActor ? undefined : options?.entryTimingStates);
   const currentMessageIndex = messages.length;
   const matchingContext = await buildLorebookMatchingContext(
     db,
-    options?.characterIds,
-    options?.personaId ?? null,
+    characterIds,
+    personaId ?? null,
     gameState ?? null,
     options?.chatId,
   );
